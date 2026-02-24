@@ -40,11 +40,14 @@ import math
 import sys
 from collections import Counter
 from pathlib import Path
+import time
 
 import pandas as pd
 from Bio import SeqIO
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
+
+# !!! TODO: look through, change
 
 class ProteinFeatureExtractor:
     """
@@ -85,9 +88,10 @@ class ProteinFeatureExtractor:
         "solvent_accessibility": [set("ALFCGIVW"), set("RKQEND"), set("MSPTHY")],
     }
 
-    def __init__(self, fasta_dir: str | Path, min_length: int = 2):
+    def __init__(self, fasta_dir: str | Path, min_length: int = 2, verbose: bool = False):
         self.fasta_dir = Path(fasta_dir)
         self.min_length = min_length
+        self.verbose = verbose
         self._df: pd.DataFrame | None = None
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -102,11 +106,16 @@ class ProteinFeatureExtractor:
         skipped = 0
 
         for path in fasta_files:
+            self._print_if_verbose(f"\n\nExtracting features for sequences in {path.name}\n")
             label = self._label_from_filename(path.name)
             records = list(SeqIO.parse(str(path), "fasta"))
             print(f"  {path.name:<45} {len(records):>5} sequences  (label {label})")
 
-            for record in records:
+            num_records = len(records)
+            for i in range(num_records):
+                if i % 50 == 0:
+                    self._print_if_verbose(f"Extracted features for sequence {i}/{num_records}")
+                record = records[i]
                 seq = self._clean(str(record.seq))
                 if len(seq) < self.min_length:
                     skipped += 1
@@ -262,6 +271,10 @@ class ProteinFeatureExtractor:
                         )
 
         return features
+    
+    def _print_if_verbose(self, msg):
+        if self.verbose:
+            print(msg)
 
     @staticmethod
     def _aa_group(aa: str, groups: list[set]) -> int:
@@ -289,6 +302,6 @@ if __name__ == "__main__":
     print(f"  Features  : {total_features}  "
           f"(1 length + 20 AAC + 400 DPC + 6 physico + 147 CTD)\n")
 
-    extractor = ProteinFeatureExtractor(fasta_dir=FASTA_DIR)
+    extractor = ProteinFeatureExtractor(fasta_dir=FASTA_DIR, verbose=True)
     extractor.run()
     extractor.to_csv(OUTPUT_CSV)
