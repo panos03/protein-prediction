@@ -1,38 +1,13 @@
 """
-protein_feature_extractor.py
-============================
-Reads protein sequences from FASTA files and extracts numerical features
-for enzyme classification.
-
 Features extracted per sequence (574 total)
---------------------------------------------
-  length               : sequence length                             (1)
-  AAC                  : amino acid composition                      (20)
-  DPC                  : dipeptide composition                       (400)
-  physicochemical      : MW, pI, aromaticity, instability_index,
-                         GRAVY, charge_at_pH7                        (6)
-  CTD                  : Composition / Transition / Distribution
-                         over 7 physicochemical property groups      (147)
 
-Class labels
-------------
-  class0-not_an_enzyme → 0
-  ec1-oxidoreductases  → 1
-  ec2-transferases     → 2
-  ec3-hydrolases       → 3
-  ec4-lyases           → 4
-  ec5-isomerases       → 5
-  ec6-ligases          → 6
-
-Usage
------
-  from protein_feature_extractor import ProteinFeatureExtractor
-
-  extractor = ProteinFeatureExtractor(fasta_dir="data/fasta-files")
-  df = extractor.run()          # returns a pandas DataFrame
-  extractor.to_csv("data/features.csv")
-
-Dependencies: biopython, pandas
+length               : sequence length                             (1)
+AAC                  : amino acid composition                      (20)
+DPC                  : dipeptide composition                       (400)
+physicochemical      : MW, pI, aromaticity, instability_index,
+                       GRAVY, charge_at_pH7                        (6)
+CTD                  : Composition / Transition / Distribution
+                       over 7 physicochemical property groups      (147)
 """
 
 import itertools
@@ -50,21 +25,8 @@ from Bio.SeqUtils.ProtParam import ProteinAnalysis
 # !!! TODO: look through, change
 
 class ProteinFeatureExtractor:
-    """
-    Extracts numerical features from protein FASTA files for
-    enzyme classification.
-
-    Parameters
-    ----------
-    fasta_dir : str or Path
-        Directory containing .fasta FASTA files whose filenames begin with
-        a recognised class prefix (e.g. "class0-…", "ec1-…", …, "ec6-…").
-    min_length : int
-        Sequences shorter than this are silently skipped (default 2).
-    """
 
     AMINO_ACIDS = list("ACDEFGHIKLMNPQRSTVWY")
-    AA_SET = set(AMINO_ACIDS)
 
     CLASS_MAP = {
         "class0": 0,
@@ -77,8 +39,8 @@ class ProteinFeatureExtractor:
     }
 
     # Dubchak et al. (1995) physicochemical groupings for CTD features.
-    # Each property maps to three groups covering all 20 standard AAs.
-    CTD_PROPERTIES: dict[str, list[set]] = {
+    # Each property maps to three groups, covering all 20 standard AAs.
+    CTD_PROPERTIES = {
         "hydrophobicity": [set("RKEDQN"), set("GASTPHY"), set("CVLIMFW")],
         "volume": [set("GASTCPD"), set("NVEQIL"), set("MHKFRYW")],
         "polarity": [set("LIFWCMVY"), set("PATGS"), set("HQRKNED")],
@@ -88,38 +50,40 @@ class ProteinFeatureExtractor:
         "solvent_accessibility": [set("ALFCGIVW"), set("RKQEND"), set("MSPTHY")],
     }
 
-    def __init__(self, fasta_dir: str | Path, min_length: int = 2, verbose: bool = False):
+    def __init__(self, fasta_dir, min_length=2, verbose=False):
         self.fasta_dir = Path(fasta_dir)
         self.min_length = min_length
         self.verbose = verbose
-        self._df: pd.DataFrame | None = None
+        self._df = None
 
-    # ── Public API ─────────────────────────────────────────────────────────
 
-    def run(self) -> pd.DataFrame:
-        """Parse all FASTA files, extract features, return a DataFrame."""
+    def run(self):
+
+        # Parse all FASTA files, extract features, return a DataFrame
+
         fasta_files = sorted(self.fasta_dir.glob("*.fasta"))
         if not fasta_files:
             sys.exit(f"No .fasta FASTA files found in {self.fasta_dir}")
 
-        rows: list[dict] = []
+        rows = []
         skipped = 0
         start_time = time.time()
 
         for path in fasta_files:
+
             self._print_if_verbose(f"\n\nExtracting features for sequences in {path.name}\n")
             label = self._label_from_filename(path.name)
-            records = list(SeqIO.parse(str(path), "fasta"))
+            records = list(SeqIO.parse(str(path), "fasta"))     # parse using Biopython framework
             print(f"    {path.name:<45} {len(records):>5} sequences  (label {label})")
 
             num_records = len(records)
             for i, record in enumerate(records):
                 if i % 100 == 0:
-                    self._print_if_verbose(f"Extracted features for sequence {i}/{num_records}")
+                    self._print_if_verbose(f"Extracted features for sequence {i:>5}/{num_records:<5}")
                 seq = self._clean(str(record.seq))
                 if len(seq) < self.min_length:
                     skipped += 1
-                    self._print_if_verbose(f"   !! skipped {record}")
+                    self._print_if_verbose(f"   !! skipped: \n{record}")
                     continue
                 try:
                     feats = self._extract(seq)
@@ -130,29 +94,32 @@ class ProteinFeatureExtractor:
                     print(f"    !! skipped ({exc}): {seq[:40]}...")
 
         if not rows:
-            sys.exit("No features extracted — check your FASTA files.")
+            sys.exit("No features extracted — check FASTA files.")
 
-        self._print_if_verbose(f"Extraction complete. Took {(time.time() - start_time):.1f} seconds")
+        self._print_if_verbose(f"\nExtraction complete. Took {(time.time() - start_time):.1f} seconds")
 
         self._df = pd.DataFrame(rows)
         print(f"\nExtracted {len(self._df)} samples x "
               f"{len(self._df.columns) - 1} features")
         if skipped:
             print(f"  ({skipped} sequences skipped)")
+
         return self._df
 
-    def to_csv(self, path: str | Path) -> None:
-        """Write the feature DataFrame to CSV."""
+
+    def to_csv(self, path):
+
         if self._df is None:
             raise RuntimeError("Call .run() before .to_csv()")
+        
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         self._df.to_csv(out, index=False)
         print(f"Saved → {out}")
 
-    # ── Private helpers ────────────────────────────────────────────────────
 
-    def _label_from_filename(self, filename: str) -> int:
+    def _label_from_filename(self, filename):
+
         for prefix, label in self.CLASS_MAP.items():
             if filename.startswith(prefix):
                 return label
@@ -161,15 +128,15 @@ class ProteinFeatureExtractor:
             f"Expected prefix in {list(self.CLASS_MAP)}"
         )
 
-    def _clean(self, seq: str) -> str:
-        """Uppercase and retain only the 20 canonical amino acids."""
-        return "".join(aa for aa in seq.upper() if aa in self.AA_SET)
 
-    # ── Feature extraction ─────────────────────────────────────────────────
+    def _clean(self, seq):
+        # ensure seq is uppercase and has only letters of the 20 amino acids
+        return "".join(aa for aa in seq.upper() if aa in self.AMINO_ACIDS)
 
-    def _extract(self, seq: str) -> dict:
-        """Compute all features for a single cleaned sequence."""
-        feats: dict = {}
+
+    def _extract(self, seq):
+        # Compute all features
+        feats = {}
         feats.update(self._feat_length(seq))
         feats.update(self._feat_aac(seq))
         feats.update(self._feat_dpc(seq))
@@ -177,17 +144,20 @@ class ProteinFeatureExtractor:
         feats.update(self._feat_ctd(seq))
         return feats
 
-    def _feat_length(self, seq: str) -> dict:
+
+    def _feat_length(self, seq):
         return {"length": len(seq)}
 
-    def _feat_aac(self, seq: str) -> dict:
-        """Amino Acid Composition: frequency of each of the 20 AAs."""
+
+    def _feat_aac(self, seq):
+        # Amino Acid Composition: frequency of each of the 20 AAs
         n = len(seq)
         counts = Counter(seq)
         return {f"AAC_{aa}": counts.get(aa, 0) / n for aa in self.AMINO_ACIDS}
 
-    def _feat_dpc(self, seq: str) -> dict:
-        """Dipeptide Composition: frequency of all 400 dipeptide pairs."""
+
+    def _feat_dpc(self, seq):
+        # Dipeptide Composition: frequency of all 400 dipeptide pairs
         n = len(seq) - 1
         if n <= 0:
             return {
@@ -200,8 +170,9 @@ class ProteinFeatureExtractor:
             for a, b in itertools.product(self.AMINO_ACIDS, repeat=2)
         }
 
-    def _feat_physicochemical(self, seq: str) -> dict:
-        """Six global physicochemical descriptors via Biopython."""
+
+    def _feat_physicochemical(self, seq):
+        # 6 physicochemical features from Biopython
         pa = ProteinAnalysis(seq)
         return {
             "MW": pa.molecular_weight(),
@@ -212,38 +183,40 @@ class ProteinFeatureExtractor:
             "charge_at_pH7": pa.charge_at_pH(7.0),
         }
 
-    def _feat_ctd(self, seq: str) -> dict:
-        """
-        Composition-Transition-Distribution features (147 total).
 
-        For each of 7 physicochemical properties the 20 amino acids are
-        split into 3 groups, then three descriptor types are computed:
+    def _feat_ctd(self, seq):
+        # Composition-Transition-Distribution features (147 total).
 
-        Composition  (C):  fraction of residues in each group         → 3
-        Transition   (T):  fraction of adjacent pairs that cross
-                           groups (3 pairwise combinations)           → 3
-        Distribution (D):  normalised position of the 0th, 25th,
-                           50th, 75th, 100th percentile residue
-                           for each group                             → 15
-                                                                  ──────
-                                                          21 per property
-                                                         * 7 properties
-                                                         = 147 features
-        """
-        features: dict[str, float] = {}
+        # For each of 7 physicochemical properties the 20 amino acids are
+        # split into 3 groups, then three descriptor types are computed:
+
+        # Composition  (C):  fraction of residue (in sequence) in each group         → 3
+
+        # Transition   (T):  fraction of adjacent pairs that cross
+        #                    groups (3 pairwise combinations)           → 3
+        # (how often groups alternate in the sequence / whether they are the same together)
+
+        # Distribution (D):  normalised position of the 0th, 25th,
+        #                    50th, 75th, 100th percentile residue
+        #                    for each group                             → 15
+        # (where in the sequence each group sits)
+
+        # 21 descriptors per property * 7 properties = 147 features
+
+        features = {}
         n = len(seq)
 
         for prop, groups in self.CTD_PROPERTIES.items():
-            # Map each residue to its 1-based group index
+            # Map each AA to its group index
             labels = [self._aa_group(aa, groups) for aa in seq]
 
-            # ── Composition ──
+            # Composition
             for g in (1, 2, 3):
                 features[f"CTDC_{prop}_G{g}"] = labels.count(g) / n
 
-            # ── Transition ──
+            # Transition
             n_adj = n - 1
-            trans: Counter = Counter()
+            trans = Counter()
             for i in range(n_adj):
                 a, b = labels[i], labels[i + 1]
                 if a != b:
@@ -253,7 +226,7 @@ class ProteinFeatureExtractor:
                     trans.get((g1, g2), 0) / n_adj if n_adj > 0 else 0.0
                 )
 
-            # ── Distribution ──
+            # Distribution
             for g in (1, 2, 3):
                 positions = [i for i, lbl in enumerate(labels) if lbl == g]
                 cnt = len(positions)
@@ -275,24 +248,24 @@ class ProteinFeatureExtractor:
 
         return features
     
+
     def _print_if_verbose(self, msg):
         if self.verbose:
             print(msg)
 
+
     @staticmethod
-    def _aa_group(aa: str, groups: list[set]) -> int:
-        """Return 1-based group index for an amino acid under a CTD property."""
+    def _aa_group(aa, groups):
+        # Return 1-based group index, for an amino acid under a CTD property
         for i, grp in enumerate(groups, start=1):
             if aa in grp:
                 return i
         return 0  # should not happen after cleaning
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CLI entry point
-# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+
     SCRIPT_DIR = Path(__file__).parent
     PROJECT_DIR = SCRIPT_DIR.parent
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
@@ -306,5 +279,7 @@ if __name__ == "__main__":
           f"(1 length + 20 AAC + 400 DPC + 6 physico + 147 CTD)\n")
 
     extractor = ProteinFeatureExtractor(fasta_dir=FASTA_DIR, verbose=True)
-    extractor.run()
+    df = extractor.run()
     extractor.to_csv(OUTPUT_CSV)
+
+    print(f"Dataframe shape: {df.shape}")
