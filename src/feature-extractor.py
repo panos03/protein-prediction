@@ -104,6 +104,7 @@ class ProteinFeatureExtractor:
 
         rows: list[dict] = []
         skipped = 0
+        start_time = time.time()
 
         for path in fasta_files:
             self._print_if_verbose(f"\n\nExtracting features for sequences in {path.name}\n")
@@ -112,13 +113,13 @@ class ProteinFeatureExtractor:
             print(f"    {path.name:<45} {len(records):>5} sequences  (label {label})")
 
             num_records = len(records)
-            for i in range(num_records):
+            for i, record in enumerate(records):
                 if i % 100 == 0:
                     self._print_if_verbose(f"Extracted features for sequence {i}/{num_records}")
-                record = records[i]
                 seq = self._clean(str(record.seq))
                 if len(seq) < self.min_length:
                     skipped += 1
+                    self._print_if_verbose(f"   !! skipped {record}")
                     continue
                 try:
                     feats = self._extract(seq)
@@ -131,8 +132,10 @@ class ProteinFeatureExtractor:
         if not rows:
             sys.exit("No features extracted — check your FASTA files.")
 
+        self._print_if_verbose(f"Extraction complete. Took {(time.time() - start_time):.1f} seconds")
+
         self._df = pd.DataFrame(rows)
-        print(f"\nExtracted {len(self._df)} samples × "
+        print(f"\nExtracted {len(self._df)} samples x "
               f"{len(self._df.columns) - 1} features")
         if skipped:
             print(f"  ({skipped} sequences skipped)")
