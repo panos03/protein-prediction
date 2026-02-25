@@ -57,7 +57,7 @@ class ProteinFeatureExtractor:
     Parameters
     ----------
     fasta_dir : str or Path
-        Directory containing .txt FASTA files whose filenames begin with
+        Directory containing .fasta FASTA files whose filenames begin with
         a recognised class prefix (e.g. "class0-…", "ec1-…", …, "ec6-…").
     min_length : int
         Sequences shorter than this are silently skipped (default 2).
@@ -98,9 +98,9 @@ class ProteinFeatureExtractor:
 
     def run(self) -> pd.DataFrame:
         """Parse all FASTA files, extract features, return a DataFrame."""
-        fasta_files = sorted(self.fasta_dir.glob("*.txt"))
+        fasta_files = sorted(self.fasta_dir.glob("*.fasta"))
         if not fasta_files:
-            sys.exit(f"No .txt FASTA files found in {self.fasta_dir}")
+            sys.exit(f"No .fasta FASTA files found in {self.fasta_dir}")
 
         rows: list[dict] = []
         skipped = 0
@@ -109,11 +109,11 @@ class ProteinFeatureExtractor:
             self._print_if_verbose(f"\n\nExtracting features for sequences in {path.name}\n")
             label = self._label_from_filename(path.name)
             records = list(SeqIO.parse(str(path), "fasta"))
-            print(f"  {path.name:<45} {len(records):>5} sequences  (label {label})")
+            print(f"    {path.name:<45} {len(records):>5} sequences  (label {label})")
 
             num_records = len(records)
             for i in range(num_records):
-                if i % 50 == 0:
+                if i % 100 == 0:
                     self._print_if_verbose(f"Extracted features for sequence {i}/{num_records}")
                 record = records[i]
                 seq = self._clean(str(record.seq))
