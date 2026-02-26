@@ -1,22 +1,29 @@
 """
-Features extracted per sequence (574 total)
+Features extracted per sequence (603 total)
 
 length               : sequence length                             (1)
 AAC                  : amino acid composition                      (20)
 DPC                  : dipeptide composition                       (400)
 physicochemical      : MW, pI, aromaticity, instability_index,
                        GRAVY, charge_at_pH7                        (6)
+secondary_structure  : helix, turn, sheet fractions                (3)
+catalytic_residues   : positional stats + clustering for           (13)
+                       key catalytic AAs (C, H, S, D, E)
+motifs               : counts of conserved catalytic motifs        (11)
+complexity           : Shannon entropy                             (2)
 CTD                  : Composition / Transition / Distribution
                        over 7 physicochemical property groups      (147)
 """
 
 import itertools
 import math
+import re
 import sys
 from collections import Counter
 from pathlib import Path
 import time
 
+import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
@@ -48,6 +55,23 @@ class ProteinFeatureExtractor:
         "charge": [set("KR"), set("ACFGHILMNPQSTVWY"), set("DE")],
         "secondary_structure": [set("EALMQKRH"), set("VIYCWFT"), set("GNPSD")],
         "solvent_accessibility": [set("ALFCGIVW"), set("RKQEND"), set("MSPTHY")],
+    }
+
+    # Key catalytic residues — disproportionately found in active sites
+    CATALYTIC_RESIDUES = list("CHSDE")
+
+    # Conserved motifs associated with catalytic activity (PROSITE-style)
+    CATALYTIC_MOTIFS = {
+        "CxxC":      r"C.{2}C",       # redox-active disulfide (EC1)
+        "GxGxxG":    r"G.G.{2}G",     # Rossmann fold (EC1, EC2)
+        "GxSxG":     r"G.S.G",        # serine hydrolase triad (EC3)
+        "GxxxxGK":   r"G.{4}GK",      # P-loop / Walker A, ATP binding (EC6)
+        "HxxH":      r"H.{2}H",       # metal-binding (various metalloenzymes)
+        "DxE":       r"D.E",          # acid-base catalysis (EC4, EC5)
+        "ExD":       r"E.D",          # acid-base catalysis (EC4, EC5)
+        "HExxH":     r"HE.{2}H",      # zinc-binding (EC3, EC4)
+        "HRD":       r"HRD",          # kinase active site (EC2)
+        "CxxxxxR":   r"C.{5}R",       # phosphatase signature (EC3)
     }
 
     def __init__(self, fasta_dir, min_length=2, verbose=False):
@@ -141,6 +165,10 @@ class ProteinFeatureExtractor:
         feats.update(self._feat_aac(seq))
         feats.update(self._feat_dpc(seq))
         feats.update(self._feat_physicochemical(seq))
+        feats.update(self._feat_secondary_structure(seq))
+        feats.update(self._feat_catalytic_residues(seq))
+        feats.update(self._feat_motifs(seq))
+        feats.update(self._feat_complexity(seq))
         feats.update(self._feat_ctd(seq))
         return feats
 
@@ -181,6 +209,89 @@ class ProteinFeatureExtractor:
             "instability_index": pa.instability_index(),
             "GRAVY": pa.gravy(),
             "charge_at_pH7": pa.charge_at_pH(7.0),
+        }
+
+
+    def _feat_secondary_structure(self, seq):
+        # Predicted secondary structure content: estimates helix, turn,
+        # and sheet inclination from amino acid composition (Chou-Fasman style).
+        pa = ProteinAnalysis(seq)       # using Biopython framework
+        helix, turn, sheet = pa.secondary_structure_fraction()
+        return {
+            "SS_helix": helix,
+            "SS_turn": turn,
+            "SS_sheet": sheet,
+        }
+
+
+    def _feat_catalytic_residues(self, seq):
+        # Positional and clustering features for catalytic AAs (C, H, S, D, E). 
+        # Enzymes tend to have catalytic residues clustered near the active site; 
+        # non-enzymes tend to have them dispersed.
+
+        # NOTE: frequency is NOT included here — it would duplicate AAC.
+        # Instead we capture WHERE catalytic residues sit (mean position,
+        # spread) and HOW they cluster (gap statistics).
+
+        n = len(seq)
+        features = {}
+        all_positions = []
+
+        # Position statistics for each catalytic residue
+        for aa in self.CATALYTIC_RESIDUES:
+            positions = [i for i, c in enumerate(seq) if c == aa]
+            count = len(positions)
+
+            if count > 0:
+                normed_positions = [p / n for p in positions]
+                features[f"CAT_{aa}_mean_pos"] = np.mean(normed_positions)
+                features[f"CAT_{aa}_std_pos"] = np.std(normed_positions) if count > 1 else 0.0
+            else:
+                features[f"CAT_{aa}_mean_pos"] = 0.0
+                features[f"CAT_{aa}_std_pos"] = 0.0
+
+            all_positions.extend(positions)
+
+        # Gap statistics across all catalytic residues
+        if len(all_positions) >= 2:
+            sorted_pos = sorted(all_positions)
+            gaps = [sorted_pos[i+1] - sorted_pos[i] for i in range(len(sorted_pos)-1)]
+            features["CAT_max_gap"] = max(gaps) / n
+            features["CAT_mean_gap"] = np.mean(gaps) / n
+            features["CAT_std_gap"] = np.std(gaps) / n if len(gaps) > 1 else 0.0
+        else:
+            features["CAT_max_gap"] = 1.0
+            features["CAT_mean_gap"] = 1.0
+            features["CAT_std_gap"] = 0.0
+
+        return features
+
+
+    def _feat_motifs(self, seq):
+        # Counts of conserved catalytic motifs - these are associated with catalytic activity
+        # Each motif is EC-class-specific - see CATALYTIC_MOTIFS for details.
+        features = {}
+        total = 0
+        for name, pattern in self.CATALYTIC_MOTIFS.items():
+            count = len(re.findall(pattern, seq))   # using regex to find occurrences of motif in seq
+            features[f"MOTIF_{name}"] = count
+            total += count
+        features["MOTIF_total"] = total
+        return features
+
+
+    def _feat_complexity(self, seq):
+        # Shannon entropy of amino acid composition. Enzymes tend toward
+        # moderate-high complexity (diverse residues for catalysis);
+        # low-complexity regions suggest disordered/repetitive non-enzymes.
+        n = len(seq)
+        counts = Counter(seq)
+        probs = [c / n for c in counts.values()]
+        entropy = -sum(p * math.log2(p) for p in probs if p > 0)
+        max_entropy = math.log2(20)
+        return {
+            "COMP_entropy": entropy,
+            "COMP_entropy_norm": entropy / max_entropy,
         }
 
 
@@ -271,12 +382,11 @@ if __name__ == "__main__":
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
     OUTPUT_CSV = PROJECT_DIR / "data" / "features.csv"
 
-    total_features = 1 + 20 + 400 + 6 + 147  # = 574
+    total_features = 1 + 20 + 400 + 6 + 3 + 13 + 11 + 2 + 147  # = 603
     print("Protein Feature Extractor")
     print(f"  FASTA dir : {FASTA_DIR}")
     print(f"  Output    : {OUTPUT_CSV}")
-    print(f"  Features  : {total_features}  "
-          f"(1 length + 20 AAC + 400 DPC + 6 physico + 147 CTD)\n")
+    print(f"  Expected Features  : {total_features}\n")
 
     extractor = ProteinFeatureExtractor(fasta_dir=FASTA_DIR, verbose=True)
     df = extractor.run()
