@@ -1,11 +1,12 @@
 """
-Features extracted per sequence (603 total)
+Features extracted per sequence (607 total)
 
 length               : sequence length                             (1)
 AAC                  : amino acid composition                      (20)
 DPC                  : dipeptide composition                       (400)
 physicochemical      : MW, pI, aromaticity, instability_index,
-                       GRAVY, charge_at_pH7                        (6)
+                       GRAVY, charge_at_pH7, extinction coeffs,
+                       flexibility mean/std                        (10)
 secondary_structure  : helix, turn, sheet fractions                (3)
 catalytic_residues   : positional stats + clustering for           (13)
                        key catalytic AAs (C, H, S, D, E)
@@ -200,8 +201,10 @@ class ProteinFeatureExtractor:
 
 
     def _feat_physicochemical(self, seq):
-        # 6 physicochemical features from Biopython
+        # 10 physicochemical features from Biopython
         pa = ProteinAnalysis(seq)
+        ext_reduced, ext_oxidized = pa.molar_extinction_coefficient()   # how strongly the protein absorbs UV light (reduced = all Cys free; oxidized = disulfide bonds formed)
+        flex = pa.flexibility()     # per-residue backbone flexibility scores (Vihinen scale); summarised to mean/std below
         return {
             "MW": pa.molecular_weight(),
             "pI": pa.isoelectric_point(),
@@ -209,12 +212,16 @@ class ProteinFeatureExtractor:
             "instability_index": pa.instability_index(),
             "GRAVY": pa.gravy(),
             "charge_at_pH7": pa.charge_at_pH(7.0),
+            "extinction_coeff_reduced": ext_reduced,
+            "extinction_coeff_oxidized": ext_oxidized,
+            "flexibility_mean": np.mean(flex),
+            "flexibility_std": np.std(flex),
         }
 
 
     def _feat_secondary_structure(self, seq):
         # Predicted secondary structure content: estimates helix, turn,
-        # and sheet inclination from amino acid composition (Chou-Fasman style).
+        # and sheet inclination from amino acid composition
         pa = ProteinAnalysis(seq)       # using Biopython framework
         helix, turn, sheet = pa.secondary_structure_fraction()
         return {
@@ -382,7 +389,7 @@ if __name__ == "__main__":
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
     OUTPUT_CSV = PROJECT_DIR / "data" / "features.csv"
 
-    total_features = 1 + 20 + 400 + 6 + 3 + 13 + 11 + 2 + 147  # = 603
+    total_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147  # = 607
     print("Protein Feature Extractor")
     print(f"  FASTA dir : {FASTA_DIR}")
     print(f"  Output    : {OUTPUT_CSV}")
