@@ -399,4 +399,4 @@ if __name__ == "__main__":
     df = extractor.run()
     extractor.to_csv(OUTPUT_CSV)
 
-    print(f"Dataframe shape: {df.shape}")
+    print(f"Dataframe shape (includes all feature columns, and label column): {df.shape}")
