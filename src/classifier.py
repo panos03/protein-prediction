@@ -22,7 +22,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import uniform, randint
 
 from sklearn.model_selection import (
     train_test_split,
@@ -60,7 +59,7 @@ class EnzymeClassifier:
     def __init__(self, features_csv, test_size=0.2, random_state=42):
         self.features_csv = Path(features_csv)
         self.test_size = test_size
-        self.random_state = random_state
+        self.random_state = random_state    # for reproducibility of train/test split and CV folds
 
         self.X_train = None
         self.X_test = None
@@ -76,12 +75,13 @@ class EnzymeClassifier:
     def load_data(self):
         # Load features CSV and split into stratified train/test sets
         df = pd.read_csv(self.features_csv)
-        print(f"Loaded {len(df)} samples × {len(df.columns)} columns")
+        print(f"Loaded {len(df)} samples x {len(df.columns)} columns")
 
         y = df["label"].values
         X = df.drop(columns=["label"])
         self.feature_names = list(X.columns)
 
+        # stratified split into train/test sets
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             X.values, y,
             test_size=self.test_size,
@@ -94,55 +94,73 @@ class EnzymeClassifier:
         self._print_class_distribution("Test",  self.y_test)
 
 
-    def search_hyperparameters(self, n_iter=50, cv_folds=5, scoring="f1_macro", verbose=1):
-        # Randomised cross-validated hyperparameter search over the training set
+    def search_hyperparameters(self, n_iter=20, cv_folds=3, scoring="f1_macro", verbose=1):
+        # Randomised cross-validated hyperparameter search over the training set.
+        # Only the 5 most impactful parameters are tuned; the rest are fixed at
+        # sensible defaults to keep the search to ~60 fits (20 iter × 3 folds).
         self._check_loaded()
 
+        # balanced weights so minority EC classes aren't drowned out by class 0
         sample_weights = compute_sample_weight("balanced", self.y_train)
 
+        # discrete lists instead of continuous distributions — faster and easier to report
         param_distributions = {
-            "n_estimators":     randint(100, 800),
-            "max_depth":        randint(3, 10),
-            "learning_rate":    uniform(0.01, 0.29),    # [0.01, 0.30]
-            "subsample":        uniform(0.6, 0.4),      # [0.6, 1.0]
-            "colsample_bytree": uniform(0.4, 0.6),      # [0.4, 1.0]
-            "min_child_weight": randint(1, 10),
-            "gamma":            uniform(0, 0.5),
-            "reg_alpha":        uniform(0, 1.0),        # L1 regularisation
-            "reg_lambda":       uniform(0.5, 2.0),      # L2 regularisation
+            "n_estimators":     [200, 400, 600],        # number of trees
+            "max_depth":        [4, 6, 8],              # tree depth — controls model complexity
+            "learning_rate":    [0.05, 0.1, 0.2],       # shrinkage — lower = slower but more robust
+            "subsample":        [0.7, 0.8, 1.0],        # fraction of training rows used per tree
+            "colsample_bytree": [0.5, 0.7, 1.0],        # fraction of features used per tree
         }
 
         base_model = xgb.XGBClassifier(
-            objective="multi:softprob",
+            objective="multi:softprob",     # outputs class probabilities for all 7 classes
             num_class=7,
             eval_metric="mlogloss",
-            tree_method="hist",
+            tree_method="hist",             # histogram-based split finding — faster than exact
+            min_child_weight=1,
+            gamma=0,
+            reg_alpha=0,
+            reg_lambda=1,
             random_state=self.random_state,
         )
 
+        # stratified so each fold has the same class ratio as the full training set
         cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=self.random_state)
 
         search = RandomizedSearchCV(
             estimator=base_model,
             param_distributions=param_distributions,
             n_iter=n_iter,
-            scoring=scoring,
+            scoring=scoring,                # f1_macro — treats all 7 classes equally regardless of size
             cv=cv,
             random_state=self.random_state,
-            n_jobs=-1,
+            n_jobs=4,
             verbose=verbose,
-            refit=False,        # refit manually below with sample weights
+            refit=False,                    # we refit manually with sample weights in train_best()
+            return_train_score=False,       # only need CV score, not train score
         )
 
         print(f"\nSearching {n_iter} configurations ({cv_folds}-fold CV, scoring={scoring})...\n")
-        search.fit(self.X_train, self.y_train, sample_weight=sample_weights)
+        search.fit(self.X_train, self.y_train, sample_weight=sample_weights, verbose=2)
 
         self.best_params = search.best_params_
-        self.search_results = pd.DataFrame(search.cv_results_).sort_values("rank_test_score")
+
+        # keep a clean results table: one row per configuration, sorted best → worst
+        param_cols = [f"param_{p}" for p in param_distributions]
+        self.search_results = (
+            pd.DataFrame(search.cv_results_)
+            [param_cols + ["mean_test_score", "std_test_score", "rank_test_score", "mean_fit_time"]]
+            .rename(columns=lambda c: c.replace("param_", ""))
+            .sort_values("rank_test_score")
+            .reset_index(drop=True)
+        )
 
         print(f"\nBest CV {scoring}: {search.best_score_:.4f}")
         print(f"Best params: {json.dumps(self.best_params, indent=2, default=str)}")
-        return self.best_params
+        print(f"\nAll configurations (best → worst):")
+        print(self.search_results.to_string(index=False))
+
+        return self.best_params, self.search_results
 
 
     def train_best(self, params=None):
@@ -155,6 +173,7 @@ class EnzymeClassifier:
                 "or pass params explicitly."
             )
 
+        # balanced weights — same upweighting of minority EC classes as in the search
         sample_weights = compute_sample_weight("balanced", self.y_train)
 
         self.model = xgb.XGBClassifier(
@@ -177,10 +196,10 @@ class EnzymeClassifier:
         y_pred = self.model.predict(self.X_test)
         y_prob = self.model.predict_proba(self.X_test)
 
-        macro_f1    = f1_score(self.y_test, y_pred, average="macro")
+        macro_f1 = f1_score(self.y_test, y_pred, average="macro")
         weighted_f1 = f1_score(self.y_test, y_pred, average="weighted")
-        bal_acc     = balanced_accuracy_score(self.y_test, y_pred)
-        mcc         = matthews_corrcoef(self.y_test, y_pred)
+        bal_acc = balanced_accuracy_score(self.y_test, y_pred)
+        mcc = matthews_corrcoef(self.y_test, y_pred)
 
         print("\n" + "=" * 60)
         print("EVALUATION ON HELD-OUT TEST SET")
@@ -259,7 +278,7 @@ class EnzymeClassifier:
 
 
     @staticmethod
-    def _print_class_distribution(name, y):
+    def _print_class_distribution(name, y):     # for visualising class imbalance and stratification
         unique, counts = np.unique(y, return_counts=True)
         parts = "  ".join(f"{int(u)}:{c}" for u, c in zip(unique, counts))
         print(f"  {name} distribution → {parts}")
@@ -274,7 +293,7 @@ if __name__ == "__main__":
 
     clf = EnzymeClassifier(features_csv=FEATURES_CSV)
     clf.load_data()
-    clf.search_hyperparameters(n_iter=50, cv_folds=5)
+    clf.search_hyperparameters(n_iter=20, cv_folds=3)
     clf.train_best()
     clf.evaluate()
     clf.feature_importance(top_n=20)
