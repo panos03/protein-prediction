@@ -105,7 +105,7 @@ class EnzymeClassifier:
 
         # discrete lists instead of continuous distributions — faster and easier to report
         param_distributions = {
-            "n_estimators":     [200, 400, 600],        # number of trees
+            "n_estimators":     [50, 200, 400],         # number of trees
             "max_depth":        [4, 6, 8],              # tree depth — controls model complexity
             "learning_rate":    [0.05, 0.1, 0.2],       # shrinkage — lower = slower but more robust
             "subsample":        [0.7, 0.8, 1.0],        # fraction of training rows used per tree
@@ -134,14 +134,14 @@ class EnzymeClassifier:
             scoring=scoring,                # f1_macro — treats all 7 classes equally regardless of size
             cv=cv,
             random_state=self.random_state,
-            n_jobs=4,
+            n_jobs=2,
             verbose=verbose,
             refit=False,                    # we refit manually with sample weights in train_best()
             return_train_score=False,       # only need CV score, not train score
         )
 
         print(f"\nSearching {n_iter} configurations ({cv_folds}-fold CV, scoring={scoring})...\n")
-        search.fit(self.X_train, self.y_train, sample_weight=sample_weights, verbose=2)
+        search.fit(self.X_train, self.y_train, sample_weight=sample_weights)
 
         self.best_params = search.best_params_
 
@@ -238,7 +238,7 @@ class EnzymeClassifier:
 
 
     def feature_importance(self, top_n=20):
-        # Print and return top-N features by XGBoost gain importance
+        # Overall feature importance: aggregate gain across all trees and all classes
         self._check_model()
         importance = self.model.get_booster().get_score(importance_type="gain")
         df = (
@@ -246,9 +246,44 @@ class EnzymeClassifier:
             .sort_values("gain", ascending=False)
             .head(top_n)
         )
-        print(f"\nTop {top_n} features by gain:")
+        print(f"\nTop {top_n} features by gain (overall):")
         print(df.to_string())
         return df
+
+
+    def feature_importance_per_class(self, top_n=10):
+        # Per-class feature importance by partitioning trees by their class assignment.
+        # In XGBoost multi:softprob, one tree is grown per class per boosting round,
+        # cycling as: tree 0 → class 0, tree 1 → class 1, ..., tree 6 → class 6,
+        # tree 7 → class 0, tree 8 → class 1, ... so tree i belongs to class (i % 7).
+        # Summing gain over all split nodes for each class gives class-specific importance.
+        self._check_model()
+
+        trees_df = self.model.get_booster().trees_to_dataframe()
+
+        # leaf nodes have Feature == "Leaf" — exclude them, only keep split nodes
+        splits = trees_df[trees_df["Feature"] != "Leaf"].copy()
+        splits["class_idx"] = splits["Tree"] % len(self.CLASS_NAMES)
+
+        # build a combined DataFrame: rows = features, columns = class names
+        per_class = {}
+        for class_idx, class_name in enumerate(self.CLASS_NAMES):
+            class_splits = splits[splits["class_idx"] == class_idx]
+            per_class[class_name] = (
+                class_splits.groupby("Feature")["Gain"]
+                .sum()
+                .sort_values(ascending=False)
+            )
+
+        combined = pd.DataFrame(per_class).fillna(0)
+
+        # print top-N for each class
+        for class_name in self.CLASS_NAMES:
+            top = combined[class_name].sort_values(ascending=False).head(top_n)
+            print(f"\nTop {top_n} features for {class_name}:")
+            print(top.to_string())
+
+        return combined
 
 
     def save_model(self, path):
@@ -297,4 +332,5 @@ if __name__ == "__main__":
     clf.train_best()
     clf.evaluate()
     clf.feature_importance(top_n=20)
+    clf.feature_importance_per_class(top_n=10)
     clf.save_model(MODEL_PATH)
