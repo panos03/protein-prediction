@@ -30,7 +30,6 @@ from Bio import SeqIO
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
 
-# !!! TODO: look through, change
 
 class ProteinFeatureExtractor:
 

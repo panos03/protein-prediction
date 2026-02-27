@@ -41,6 +41,10 @@ from sklearn.utils.class_weight import compute_sample_weight
 import xgboost as xgb
 
 
+
+# TODO look over
+
+
 class EnzymeClassifier:
 
     CLASS_NAMES = [
