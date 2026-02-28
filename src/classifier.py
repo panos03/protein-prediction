@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import time
 
 from sklearn.model_selection import (
     train_test_split,
@@ -231,7 +232,7 @@ class EnzymeClassifier:
         }
 
 
-    def predict(self, X):
+    def predict(self, X):   # TODO return class label along with High/Medium/Low confidence -> explain how this conversion is made? new blind predict method?
         # Return (predicted classes, class probabilities) for new data
         self._check_model()
         return self.model.predict(X), self.model.predict_proba(X)
@@ -318,6 +319,28 @@ class EnzymeClassifier:
         parts = "  ".join(f"{int(u)}:{c}" for u, c in zip(unique, counts))
         print(f"  {name} distribution → {parts}")
 
+    
+    @staticmethod   # TODO use
+    def confidence_label(prob):     # confidence level thresholds
+        if prob >= 0.8:
+            return "High"
+        elif prob >= 0.5:
+            return "Medium"
+        else:
+            return "Low"
+
+
+def save_df_to_csv(df, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=True)
+    print(f"Saved → {path}")
+
+
+def log_time(message):
+    print(f"[{time.time():.3f}] {message}")
+
+
 
 if __name__ == "__main__":
 
@@ -325,12 +348,76 @@ if __name__ == "__main__":
     PROJECT_DIR  = SCRIPT_DIR.parent
     FEATURES_CSV = PROJECT_DIR / "data" / "features.csv"
     MODEL_PATH   = PROJECT_DIR / "models" / "best_xgb.json"
+    RESULTS_DIR  = PROJECT_DIR / "results"
+
+    log_time("Starting pipeline")
 
     clf = EnzymeClassifier(features_csv=FEATURES_CSV)
+
+    # ---------------- LOAD DATA ----------------
     clf.load_data()
-    clf.search_hyperparameters(n_iter=20, cv_folds=3)
+    log_time("Data loaded")
+
+    # ---------------- HYPERPARAM SEARCH ----------------
+    best_params, search_results = clf.search_hyperparameters(n_iter=20, cv_folds=3)
+    log_time("Hyperparameter search complete")
+
+    save_df_to_csv(
+        search_results,
+        RESULTS_DIR / "hyperparameter_search_results.csv"
+    )
+    log_time("Hyperparameter search results saved")
+
+    with open(RESULTS_DIR / "best_params.json", "w") as f:
+        json.dump(best_params, f, indent=2)
+    log_time("Best parameters saved")
+
+    # ---------------- TRAIN ----------------
     clf.train_best()
-    clf.evaluate()
-    clf.feature_importance(top_n=20)
-    clf.feature_importance_per_class(top_n=10)
+    log_time("Model training complete")
+
+    # ---------------- EVALUATION ----------------
+    eval_results = clf.evaluate()
+    log_time("Evaluation complete")
+
+    metrics_df = pd.DataFrame([{
+        "macro_f1": eval_results["macro_f1"],
+        "weighted_f1": eval_results["weighted_f1"],
+        "balanced_accuracy": eval_results["balanced_accuracy"],
+        "mcc": eval_results["mcc"],
+    }])
+
+    save_df_to_csv(metrics_df, RESULTS_DIR / "evaluation_metrics.csv")
+    log_time("Evaluation metrics saved")
+
+    cm_df = pd.DataFrame(
+        eval_results["confusion_matrix"],
+        index=EnzymeClassifier.CLASS_NAMES,
+        columns=EnzymeClassifier.CLASS_NAMES,
+    )
+
+    save_df_to_csv(cm_df, RESULTS_DIR / "confusion_matrix.csv")
+    log_time("Confusion matrix saved")
+
+    preds_df = pd.DataFrame({
+        "y_true": clf.y_test,
+        "y_pred": eval_results["y_pred"],
+    })
+
+    save_df_to_csv(preds_df, RESULTS_DIR / "predictions.csv")
+    log_time("Predictions saved")
+
+    # ---------------- FEATURE IMPORTANCE ----------------
+    fi_df = clf.feature_importance(top_n=20)
+    save_df_to_csv(fi_df, RESULTS_DIR / "feature_importance_overall.csv")
+    log_time("Overall feature importance saved")
+
+    fi_per_class = clf.feature_importance_per_class(top_n=10)
+    save_df_to_csv(fi_per_class, RESULTS_DIR / "feature_importance_per_class.csv")
+    log_time("Per-class feature importance saved")
+
+    # ---------------- SAVE MODEL ----------------
     clf.save_model(MODEL_PATH)
+    log_time("Model saved")
+
+    log_time("Pipeline finished")
