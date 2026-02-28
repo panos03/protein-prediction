@@ -161,7 +161,7 @@ class EnzymeClassifier:
         self.X_train_s2 = pd.DataFrame(
             self.X_train.values[enzyme_mask], columns=self.feature_names
         )
-        self.y_train_s2 = self.y_train[enzyme_mask]
+        self.y_train_s2 = self.y_train[enzyme_mask]     # TODO remap?
 
         # SMOTE minority enzyme classes up to 500 samples
         self.X_train_s2, self.y_train_s2 = self._smote_minority(
@@ -287,6 +287,8 @@ class EnzymeClassifier:
         self.model_s2.fit(self.X_train_s2, self.y_train_s2, sample_weight=weights_s2)
         print(f"Stage 2 trained ({params_s2.get('n_estimators', '?')} trees)")
 
+        print("SANITY CHECK - S2 classes:", self.model_s2.classes_)
+
 
     def predict(self, X):   # TODO return class label along with High/Medium/Low confidence -> explain how this conversion is made? new blind predict method?
         # Two-stage prediction:
@@ -321,7 +323,7 @@ class EnzymeClassifier:
         if enzyme_mask.any():
             X_enzyme = X[enzyme_mask] if hasattr(X, 'iloc') else X[enzyme_mask] # support both DataFrame and array inputs
             s2_probs = self.model_s2.predict_proba(X_enzyme)    # shape (m, 6): [P(EC1), ..., P(EC6)]
-            s2_pred = self.model_s2.predict(X_enzyme)           # labels 1–6
+            s2_pred = self.model_s2.predict(X_enzyme)           # labels 1–6 TODO remap?
 
             predictions[enzyme_mask] = s2_pred
 
@@ -408,8 +410,8 @@ class EnzymeClassifier:
         # TODO keep comment? :
         # Per-class feature importance by partitioning trees by their class assignment.
         # In XGBoost multi:softprob, one tree is grown per class per boosting round,
-        # cycling as: tree 0 → class 0, tree 1 → class 1, ..., tree 6 → class 6,
-        # tree 7 → class 0, tree 8 → class 1, ... so tree i belongs to class (i % 7).
+        # cycling as: tree 1 → class 1, ..., tree 6 → class 6,
+        # tree 7 → class 1, tree 8 → class 2, ... so tree i belongs to class ((i-1) % 6) + 1.
         # Summing gain over all split nodes for each class gives class-specific importance.
         if self.model_s2 is None:
             raise RuntimeError("Stage 2 model not trained.")
