@@ -340,7 +340,7 @@ def save_df_to_csv(df, path):
 def log_time(message):
     raw_time = time.time()
     formatted_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(raw_time))
-    print(f"[{formatted_time}] {message}")
+    print(f"\n    [{formatted_time}] {message}\n")
 
 
 
