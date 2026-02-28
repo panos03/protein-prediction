@@ -9,9 +9,15 @@ Usage
 -----
   clf = EnzymeClassifier(features_csv="data/features.csv")
   clf.load_data()
-  clf.search_hyperparameters(n_iter=50)   # randomised CV search
-  clf.train_best()                        # refit best params on full train set
-  clf.evaluate()                          # classification report + metrics
+
+  coarse_params = { "learning_rate": [...], "max_depth": [...], ... }
+  best_params, coarse_results = clf.search_hyperparameters(coarse_params)
+
+  refined_params = { ... }   # narrowed manually based on coarse results
+  best_params, refined_results = clf.search_hyperparameters(refined_params)
+
+  clf.train_best()            # early stopping finds optimal n_estimators
+  clf.evaluate()
   clf.save_model("models/best_xgb.json")
 
 Dependencies: xgboost, scikit-learn, pandas, numpy
@@ -24,10 +30,11 @@ import numpy as np
 import pandas as pd
 import time
 
+from sklearn.experimental import enable_halving_search_cv   # must be imported before HalvingRandomSearchCV
 from sklearn.model_selection import (
     train_test_split,
     StratifiedKFold,
-    RandomizedSearchCV,
+    HalvingRandomSearchCV,
 )
 from sklearn.metrics import (
     classification_report,
@@ -66,11 +73,9 @@ class EnzymeClassifier:
         self.X_test = None
         self.y_train = None
         self.y_test = None
-        self.feature_names = []
 
         self.best_params = {}
         self.model = None
-        self.search_results = None
 
 
     def load_data(self):
@@ -78,94 +83,90 @@ class EnzymeClassifier:
         df = pd.read_csv(self.features_csv)
         print(f"Loaded {len(df)} samples x {len(df.columns)} columns")
 
+        # prepare data
         y = df["label"].values
-        X = df.drop(columns=["label"])
-        self.feature_names = list(X.columns)
+        X = df.drop(columns=["label"])      # pass X as a DataFrame (not .values) so XGBoost retains real column names
 
-        # stratified split into train/test sets
+        # stratified split — test set keeps the natural class distribution for realistic evaluation
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            X.values, y,
+            X, y,
             test_size=self.test_size,
             stratify=y,
             random_state=self.random_state,
         )
+
+        # Undersample class 0 for training set only - huge ~100:1 imbalance between class 0 and class 6
+        # Note: we don't touch the test set to keep it representative of real-world distribution for evaluation
+        train_df = pd.DataFrame(self.X_train)
+        train_df["label"] = self.y_train
+        class_0 = train_df[train_df["label"] == 0].sample(n=3000, random_state=self.random_state)
+        train_df = pd.concat([train_df[train_df["label"] != 0], class_0]).sample(frac=1, random_state=self.random_state)
+        self.X_train = train_df.drop(columns=["label"])
+        self.y_train = train_df["label"].values
 
         print(f"Train: {len(self.X_train)}  |  Test: {len(self.X_test)}")
         self._print_class_distribution("Train", self.y_train)
         self._print_class_distribution("Test",  self.y_test)
 
 
-    def search_hyperparameters(self, n_iter=20, cv_folds=3, scoring="f1_macro", verbose=1):
-        # Randomised cross-validated hyperparameter search over the training set.
-        # Only the 5 most impactful parameters are tuned; the rest are fixed at
-        # sensible defaults to keep the search to ~60 fits (20 iter × 3 folds).
+    def search_hyperparameters(self, param_distributions, cv_folds=3, scoring="f1_macro", verbose=1):
+        # Hyperparameter search using HalvingRandomSearchCV over the supplied param_distributions.
+        # Call once with wide coarse ranges, then again with narrow refined ranges.
+        # n_estimators is NOT searched — it is found by early stopping in train_best().
+        # HalvingRandomSearchCV starts with many configs on a small sample budget,
+        # eliminates the worst each round (factor=3 keeps top 1/3), and converges cheaply.
         self._check_loaded()
 
         # balanced weights so minority EC classes aren't drowned out by class 0
         sample_weights = compute_sample_weight("balanced", self.y_train)
 
-        # discrete lists instead of continuous distributions — faster and easier to report
-        param_distributions = {
-            "n_estimators":     [50, 200, 400],         # number of trees
-            "max_depth":        [4, 6, 8],              # tree depth — controls model complexity
-            "learning_rate":    [0.05, 0.1, 0.2],       # shrinkage — lower = slower but more robust
-            "subsample":        [0.7, 0.8, 1.0],        # fraction of training rows used per tree
-            "colsample_bytree": [0.5, 0.7, 1.0],        # fraction of features used per tree
-        }
-
+        # n_estimators fixed at 300 during search — early stopping will tune it in train_best()
         base_model = xgb.XGBClassifier(
-            objective="multi:softprob",     # outputs class probabilities for all 7 classes
+            objective="multi:softprob",
             num_class=7,
             eval_metric="mlogloss",
             tree_method="hist",             # histogram-based split finding — faster than exact
-            min_child_weight=1,
-            gamma=0,
-            reg_alpha=0,
-            reg_lambda=1,
+            n_estimators=300,
+            subsample=0.8,
+            colsample_bytree=0.8,
             random_state=self.random_state,
         )
 
         # stratified so each fold has the same class ratio as the full training set
         cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=self.random_state)
 
-        search = RandomizedSearchCV(
+        search = HalvingRandomSearchCV(
             estimator=base_model,
             param_distributions=param_distributions,
-            n_iter=n_iter,
+            factor=3,                       # keep top 1/3 of configs each halving round
             scoring=scoring,                # f1_macro — treats all 7 classes equally regardless of size
             cv=cv,
             random_state=self.random_state,
-            n_jobs=2,
+            n_jobs=-1,
             verbose=verbose,
             refit=False,                    # we refit manually with sample weights in train_best()
-            return_train_score=False,       # only need CV score, not train score
         )
 
-        print(f"\nSearching {n_iter} configurations ({cv_folds}-fold CV, scoring={scoring})...\n")
+        print(f"\nSearching ({cv_folds}-fold CV, scoring={scoring})...")
         search.fit(self.X_train, self.y_train, sample_weight=sample_weights)
 
         self.best_params = search.best_params_
 
-        # keep a clean results table: one row per configuration, sorted best → worst
-        param_cols = [f"param_{p}" for p in param_distributions]
-        self.search_results = (
-            pd.DataFrame(search.cv_results_)
-            [param_cols + ["mean_test_score", "std_test_score", "rank_test_score", "mean_fit_time"]]
-            .rename(columns=lambda c: c.replace("param_", ""))
-            .sort_values("rank_test_score")
-            .reset_index(drop=True)
-        )
+        # clean results table: one row per config, with halving iteration and sample budget columns
+        results = self._format_results(search.cv_results_, param_distributions)
 
         print(f"\nBest CV {scoring}: {search.best_score_:.4f}")
         print(f"Best params: {json.dumps(self.best_params, indent=2, default=str)}")
         print(f"\nAll configurations (best → worst):")
-        print(self.search_results.to_string(index=False))
+        print(results.to_string(index=False))
 
-        return self.best_params, self.search_results
+        return self.best_params, results
 
 
     def train_best(self, params=None):
-        # Train final model on the full training set using best (or supplied) params
+        # Train final model on the full training set using best (or supplied) params.
+        # Uses early stopping on a small validation split to find the optimal n_estimators,
+        # then refits on the full training set with that number of trees.
         self._check_loaded()
         params = params or self.best_params
         if not params:
@@ -174,20 +175,45 @@ class EnzymeClassifier:
                 "or pass params explicitly."
             )
 
-        # balanced weights — same upweighting of minority EC classes as in the search
-        sample_weights = compute_sample_weight("balanced", self.y_train)
+        # hold out 10% of training data as a validation set for early stopping only
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            self.X_train, self.y_train,
+            test_size=0.1, stratify=self.y_train, random_state=self.random_state
+        )
+        weights_tr = compute_sample_weight("balanced", y_tr)
 
-        self.model = xgb.XGBClassifier(
+        # probe fit: large n_estimators, early stopping decides the optimal number
+        probe = xgb.XGBClassifier(
             **params,
+            n_estimators=2000,
             objective="multi:softprob",
             num_class=7,
             eval_metric="mlogloss",
             tree_method="hist",
+            subsample=0.8,
+            colsample_bytree=0.8,
+            early_stopping_rounds=50,      # stop if no improvement for 50 consecutive trees
             random_state=self.random_state,
         )
+        probe.fit(X_tr, y_tr, sample_weight=weights_tr, eval_set=[(X_val, y_val)], verbose=False)
+        best_n = probe.best_iteration + 1
+        print(f"Early stopping: optimal n_estimators = {best_n}")
 
+        # final fit: refit on full training set with the found n_estimators
+        sample_weights = compute_sample_weight("balanced", self.y_train)
+        self.model = xgb.XGBClassifier(
+            **params,
+            n_estimators=best_n,
+            objective="multi:softprob",
+            num_class=7,
+            eval_metric="mlogloss",
+            tree_method="hist",
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=self.random_state,
+        )
         self.model.fit(self.X_train, self.y_train, sample_weight=sample_weights)
-        print("Model trained on full training set.")
+        print(f"Model trained on full training set ({best_n} trees).")
 
 
     def evaluate(self):
@@ -303,6 +329,21 @@ class EnzymeClassifier:
         print(f"Model loaded ← {path}")
 
 
+    def _format_results(self, cv_results, param_distributions):
+        # clean results table: param columns + halving iteration/budget cols + scores
+        param_cols = [f"param_{p}" for p in param_distributions]
+        halving_cols = ["iter", "n_resources"]      # which halving round and how many samples were used
+        score_cols = ["mean_test_score", "std_test_score", "rank_test_score", "mean_fit_time"]
+        all_cols = param_cols + halving_cols + score_cols
+        available = [c for c in all_cols if c in cv_results]   # only keep cols that exist
+        return (
+            pd.DataFrame(cv_results)[available]
+            .rename(columns=lambda c: c.replace("param_", ""))
+            .sort_values("rank_test_score")
+            .reset_index(drop=True)
+        )
+
+
     def _check_loaded(self):
         if self.X_train is None:
             raise RuntimeError("Data not loaded. Call load_data() first.")
@@ -319,7 +360,7 @@ class EnzymeClassifier:
         parts = "  ".join(f"{int(u)}:{c}" for u, c in zip(unique, counts))
         print(f"  {name} distribution → {parts}")
 
-    
+
     @staticmethod   # TODO use
     def confidence_label(prob):     # confidence level thresholds
         if prob >= 0.8:
@@ -360,19 +401,39 @@ if __name__ == "__main__":
     clf.load_data()
     log_time("Data loaded")
 
-    # ---------------- HYPERPARAM SEARCH ----------------
-    best_params, search_results = clf.search_hyperparameters(n_iter=20, cv_folds=3)
-    log_time("Hyperparameter search complete")
+    # ---------------- COARSE SEARCH ----------------
+    coarse_params = {
+        "learning_rate":    [0.01, 0.03, 0.05, 0.1, 0.2],
+        "max_depth":        [3, 5, 7, 9],
+        "min_child_weight": [1, 5, 10, 20],
+        "reg_lambda":       [1, 5, 10, 20],
+        "reg_alpha":        [0, 0.1, 1, 5],
+    }
+    coarse_best, coarse_results = clf.search_hyperparameters(coarse_params, cv_folds=3)
+    log_time("Coarse search complete")
 
-    save_df_to_csv(
-        search_results,
-        RESULTS_DIR / "hyperparameter_search_results.csv"
-    )
-    log_time("Hyperparameter search results saved")
+    save_df_to_csv(coarse_results, RESULTS_DIR / "search_coarse.csv")
+    log_time("Coarse search results saved")
 
-    with open(RESULTS_DIR / "best_params.json", "w") as f:
-        json.dump(best_params, f, indent=2)
-    log_time("Best parameters saved")
+    # # ---------------- REFINED SEARCH ---------------- TODO
+    # # Manually narrow ranges around the coarse best values (inspect search_coarse.csv first).
+    # # Edit these based on coarse_best above before running the refined search.
+    # refined_params = {
+    #     "learning_rate":    [coarse_best["learning_rate"]],    # placeholder — narrow manually
+    #     "max_depth":        [coarse_best["max_depth"]],
+    #     "min_child_weight": [coarse_best["min_child_weight"]],
+    #     "reg_lambda":       [coarse_best["reg_lambda"]],
+    #     "reg_alpha":        [coarse_best["reg_alpha"]],
+    # }
+    # refined_best, refined_results = clf.search_hyperparameters(refined_params, cv_folds=3)
+    # log_time("Refined search complete")
+
+    # save_df_to_csv(refined_results, RESULTS_DIR / "search_refined.csv")
+    # log_time("Refined search results saved")
+
+    # with open(RESULTS_DIR / "best_params.json", "w") as f:
+    #     json.dump(refined_best, f, indent=2)
+    # log_time("Best parameters saved")
 
     # ---------------- TRAIN ----------------
     clf.train_best()
