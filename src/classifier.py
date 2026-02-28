@@ -1,28 +1,3 @@
-"""
-classifier.py
-=============
-Trains and evaluates an XGBoost classifier for 7-class enzyme
-classification, with built-in handling for class imbalance,
-stratified cross-validated hyperparameter search, and evaluation.
-
-Usage
------
-  clf = EnzymeClassifier(features_csv="data/features.csv")
-  clf.load_data()
-
-  coarse_params = { "learning_rate": [...], "max_depth": [...], ... }
-  best_params, coarse_results = clf.search_hyperparameters(coarse_params)
-
-  refined_params = { ... }   # narrowed manually based on coarse results
-  best_params, refined_results = clf.search_hyperparameters(refined_params)
-
-  clf.train_best()            # early stopping finds optimal n_estimators
-  clf.evaluate()
-  clf.save_model("models/best_xgb.json")
-
-Dependencies: xgboost, scikit-learn, pandas, numpy
-"""
-
 import json
 from pathlib import Path
 
@@ -46,6 +21,7 @@ from sklearn.metrics import (
 from sklearn.utils.class_weight import compute_sample_weight
 
 import xgboost as xgb
+from imblearn.over_sampling import SMOTE
 
 
 
@@ -87,7 +63,7 @@ class EnzymeClassifier:
         y = df["label"].values
         X = df.drop(columns=["label"])      # pass X as a DataFrame (not .values) so XGBoost retains real column names
 
-        # stratified split — test set keeps the natural class distribution for realistic evaluation
+        # stratified split
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             X, y,
             test_size=self.test_size,
@@ -95,14 +71,8 @@ class EnzymeClassifier:
             random_state=self.random_state,
         )
 
-        # Undersample class 0 for training set only - huge ~100:1 imbalance between class 0 and class 6
         # Note: we don't touch the test set to keep it representative of real-world distribution for evaluation
-        train_df = pd.DataFrame(self.X_train)
-        train_df["label"] = self.y_train
-        class_0 = train_df[train_df["label"] == 0].sample(n=3000, random_state=self.random_state)
-        train_df = pd.concat([train_df[train_df["label"] != 0], class_0]).sample(frac=1, random_state=self.random_state)
-        self.X_train = train_df.drop(columns=["label"])
-        self.y_train = train_df["label"].values
+        self.X_train, self.y_train = self._handle_imbalance(self.X_train, self.y_train)
 
         print(f"Train: {len(self.X_train)}  |  Test: {len(self.X_test)}")
         self._print_class_distribution("Train", self.y_train)
@@ -111,8 +81,6 @@ class EnzymeClassifier:
 
     def search_hyperparameters(self, param_distributions, cv_folds=3, scoring="f1_macro", verbose=1):
         # Hyperparameter search using HalvingRandomSearchCV over the supplied param_distributions.
-        # Call once with wide coarse ranges, then again with narrow refined ranges.
-        # n_estimators is NOT searched — it is found by early stopping in train_best().
         # HalvingRandomSearchCV starts with many configs on a small sample budget,
         # eliminates the worst each round (factor=3 keeps top 1/3), and converges cheaply.
         self._check_loaded()
@@ -120,15 +88,13 @@ class EnzymeClassifier:
         # balanced weights so minority EC classes aren't drowned out by class 0
         sample_weights = compute_sample_weight("balanced", self.y_train)
 
-        # n_estimators fixed at 300 during search — early stopping will tune it in train_best()
         base_model = xgb.XGBClassifier(
             objective="multi:softprob",
             num_class=7,
             eval_metric="mlogloss",
             tree_method="hist",             # histogram-based split finding — faster than exact
-            n_estimators=300,
-            subsample=0.8,
-            colsample_bytree=0.8,
+            subsample=0.8,                  # row subsampling for regularization and speed
+            colsample_bytree=0.8,           # feature subsampling for regularization and speed
             random_state=self.random_state,
         )
 
@@ -139,6 +105,7 @@ class EnzymeClassifier:
             estimator=base_model,
             param_distributions=param_distributions,
             factor=3,                       # keep top 1/3 of configs each halving round
+            min_resources=500,              # minimum samples per config — prevents tiny folds missing minority classes
             scoring=scoring,                # f1_macro — treats all 7 classes equally regardless of size
             cv=cv,
             random_state=self.random_state,
@@ -164,46 +131,22 @@ class EnzymeClassifier:
 
 
     def train_best(self, params=None):
-        # Train final model on the full training set using best (or supplied) params.
-        # Uses early stopping on a small validation split to find the optimal n_estimators,
-        # then refits on the full training set with that number of trees.
         self._check_loaded()
         params = params or self.best_params
         if not params:
-            raise RuntimeError(
-                "No parameters available. Run search_hyperparameters() first "
-                "or pass params explicitly."
-            )
+            # fall back to results/best_params.json if it exists and has content
+            json_path = self.features_csv.parent.parent / "results" / "best_params.json"
+            if json_path.exists() and json_path.stat().st_size > 0:
+                with open(json_path) as f:
+                    params = json.load(f)
+                print(f"Loaded best params from {json_path}")
+            else:
+                raise RuntimeError("No parameters. Run search_hyperparameters() first.")
 
-        # hold out 10% of training data as a validation set for early stopping only
-        X_tr, X_val, y_tr, y_val = train_test_split(
-            self.X_train, self.y_train,
-            test_size=0.1, stratify=self.y_train, random_state=self.random_state
-        )
-        weights_tr = compute_sample_weight("balanced", y_tr)
-
-        # probe fit: large n_estimators, early stopping decides the optimal number
-        probe = xgb.XGBClassifier(
-            **params,
-            n_estimators=2000,
-            objective="multi:softprob",
-            num_class=7,
-            eval_metric="mlogloss",
-            tree_method="hist",
-            subsample=0.8,
-            colsample_bytree=0.8,
-            early_stopping_rounds=50,      # stop if no improvement for 50 consecutive trees
-            random_state=self.random_state,
-        )
-        probe.fit(X_tr, y_tr, sample_weight=weights_tr, eval_set=[(X_val, y_val)], verbose=False)
-        best_n = probe.best_iteration + 1
-        print(f"Early stopping: optimal n_estimators = {best_n}")
-
-        # final fit: refit on full training set with the found n_estimators
         sample_weights = compute_sample_weight("balanced", self.y_train)
+
         self.model = xgb.XGBClassifier(
             **params,
-            n_estimators=best_n,
             objective="multi:softprob",
             num_class=7,
             eval_metric="mlogloss",
@@ -213,7 +156,7 @@ class EnzymeClassifier:
             random_state=self.random_state,
         )
         self.model.fit(self.X_train, self.y_train, sample_weight=sample_weights)
-        print(f"Model trained on full training set ({best_n} trees).")
+        print(f"Model trained on full training set ({params.get('n_estimators', '?')} trees).")
 
 
     def evaluate(self):
@@ -329,6 +272,34 @@ class EnzymeClassifier:
         print(f"Model loaded ← {path}")
 
 
+    def _handle_imbalance(self, X, y):
+        # Undersample class 0 - huge ~100:1 imbalance between class 0 and class 6
+        df = pd.DataFrame(X)
+        df["label"] = y
+        class_0 = df[df["label"] == 0].sample(n=3000, random_state=self.random_state)
+        df = pd.concat([df[df["label"] != 0], class_0]).sample(frac=1, random_state=self.random_state)
+        X = df.drop(columns=["label"])
+        y = df["label"].values
+
+        # SMOTE on minority EC classes: generate synthetic samples for classes below smote_target
+        smote_target = 500
+        feature_cols = list(X.columns)
+        unique, counts = np.unique(y, return_counts=True)
+        smote_strategy = {
+            int(c): smote_target
+            for c, n in zip(unique, counts)
+            if n < smote_target and c != 0      # don't oversample class 0
+        }
+        if smote_strategy:
+            smote = SMOTE(sampling_strategy=smote_strategy, random_state=self.random_state)
+            X_res, y_res = smote.fit_resample(X, y)
+            X = pd.DataFrame(X_res, columns=feature_cols)   # restore column names lost by SMOTE
+            y = y_res
+            print(f"SMOTE applied to classes: {smote_strategy}")
+
+        return X, y
+
+
     def _format_results(self, cv_results, param_distributions):
         # clean results table: param columns + halving iteration/budget cols + scores
         param_cols = [f"param_{p}" for p in param_distributions]
@@ -403,11 +374,11 @@ if __name__ == "__main__":
 
     # ---------------- COARSE SEARCH ----------------
     coarse_params = {
-        "learning_rate":    [0.01, 0.03, 0.05, 0.1, 0.2],
-        "max_depth":        [3, 5, 7, 9],
-        "min_child_weight": [1, 5, 10, 20],
-        "reg_lambda":       [1, 5, 10, 20],
-        "reg_alpha":        [0, 0.1, 1, 5],
+    "n_estimators":     [100, 300, 500],
+    "learning_rate":    [0.05, 0.1, 0.2],
+    "max_depth":        [3, 5, 7],
+    "min_child_weight": [1, 3, 5],
+    "reg_lambda":       [0.5, 1, 5],
     }
     coarse_best, coarse_results = clf.search_hyperparameters(coarse_params, cv_folds=3)
     log_time("Coarse search complete")
