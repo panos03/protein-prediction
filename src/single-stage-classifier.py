@@ -103,7 +103,7 @@ class EnzymeClassifierSingleStage:
             estimator=base_model,
             param_distributions=param_distributions,
             factor=3,                       # keep top 1/3 of configs each halving round
-            min_resources=500,              # minimum samples per config — prevents tiny folds missing minority classes
+            min_resources=min(500, len(self.X_train) // 3),    # minimum samples per config — prevents tiny folds missing minority classes
             scoring=scoring,                # f1_macro — treats all 7 classes equally regardless of size
             cv=cv,
             random_state=self.random_state,
@@ -271,10 +271,13 @@ class EnzymeClassifierSingleStage:
 
 
     def _handle_imbalance(self, X, y):
-        # Undersample class 0 - huge ~100:1 imbalance between class 0 and class 6
+        # Undersample class 0 to ~3× the total enzyme samples for balance
         df = pd.DataFrame(X)
         df["label"] = y
-        class_0 = df[df["label"] == 0].sample(n=3000, random_state=self.random_state)
+        n_enzyme = int(np.sum(y != 0))
+        n_non_enzyme = int(np.sum(y == 0))
+        n_class0_target = min(n_enzyme * 3, n_non_enzyme)
+        class_0 = df[df["label"] == 0].sample(n=n_class0_target, random_state=self.random_state)
         df = pd.concat([df[df["label"] != 0], class_0]).sample(frac=1, random_state=self.random_state)
         X = df.drop(columns=["label"])
         y = df["label"].values

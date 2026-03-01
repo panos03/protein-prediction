@@ -543,7 +543,9 @@ if __name__ == "__main__":
         "handle_imbalance": False,
     }
     
-    chosen_config = no_plm_config       # NOTE: change this to switch between configs
+    # NOTE: change this to switch between configs
+    chosen_config = no_plm_config
+    
     FEATURES_CSV = chosen_config["features_csv"]
     MODEL_DIR    = chosen_config["model_dir"]
     RESULTS_DIR  = chosen_config["results_dir"]
