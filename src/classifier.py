@@ -304,7 +304,7 @@ class EnzymeClassifier:
         probabilities = np.zeros((n, 7))
 
         # Stage 1: binary prediction
-        s1_probs = self.model_s1.predict_proba(X)   # shape (n, 2): [P(not enzyme), P(enzyme)]
+        s1_probs = self.model_s1.predict_proba(X)       # shape (n, 2): [P(not enzyme), P(enzyme)]
         s1_pred = (s1_probs[:, 1] >= 0.5).astype(int)   # P(enzyme) is the second col
 
         # Samples predicted as non-enzyme

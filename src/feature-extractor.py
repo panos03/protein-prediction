@@ -1,5 +1,5 @@
 """
-Features extracted per sequence (607 total)
+Features extracted per sequence (607 classical + 320 PLM = 927 total)
 
 length               : sequence length                             (1)
 AAC                  : amino acid composition                      (20)
@@ -14,6 +14,8 @@ motifs               : counts of conserved catalytic motifs        (11)
 complexity           : Shannon entropy                             (2)
 CTD                  : Composition / Transition / Distribution
                        over 7 physicochemical property groups      (147)
+PLM                  : ESM-2 mean-pooled embeddings                (320)
+                       (Lin et al., 2023; esm2_t6_8M_UR50D)
 """
 
 import itertools
@@ -28,6 +30,9 @@ import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
+
+import torch
+import esm
 
 
 
@@ -74,11 +79,25 @@ class ProteinFeatureExtractor:
         "CxxxxxR":   r"C.{5}R",       # phosphatase signature (EC3)
     }
 
+    # ESM-2 max input length (model's positional encoding limit)
+    ESM_MAX_LEN = 1022
+
     def __init__(self, fasta_dir, min_length=2, verbose=False):
         self.fasta_dir = Path(fasta_dir)
         self.min_length = min_length
         self.verbose = verbose
         self._df = None
+        self._load_esm_model()
+
+
+    def _load_esm_model(self):
+        # Load ESM-2 (smallest: 8M params, 6 layers, 320-dim embeddings)
+        print("Loading ESM-2 model (esm2_t6_8M_UR50D)...")
+        self.esm_model, self.esm_alphabet = esm.pretrained.esm2_t6_8M_UR50D()
+        self.esm_batch_converter = self.esm_alphabet.get_batch_converter()
+        self.esm_model.eval()       # inference mode — no dropout, no gradient tracking
+        self.esm_embed_dim = 320    # output dimension for t6 model
+        print("ESM-2 loaded.")
 
 
     def run(self):
@@ -170,6 +189,7 @@ class ProteinFeatureExtractor:
         feats.update(self._feat_motifs(seq))
         feats.update(self._feat_complexity(seq))
         feats.update(self._feat_ctd(seq))
+        feats.update(self._feat_esm2(seq))
         return feats
 
 
@@ -364,6 +384,43 @@ class ProteinFeatureExtractor:
                         )
 
         return features
+
+
+    def _feat_esm2(self, seq):
+        # ESM-2 protein language model embeddings (Lin et al., 2023).
+
+        # Uses the smallest ESM-2 model (esm2_t6_8M_UR50D, 6 layers, 320-dim)
+        # to produce a fixed-length representation of the protein sequence.
+
+        # NOTE:
+        # The model outputs a per-residue embedding (one 320-dim vector per
+        # amino acid). We extract the representation from the last transformer
+        # layer and mean-pool across all residue positions (excluding special
+        # tokens) to get a single 320-dim vector per sequence.
+        # Sequences longer than 1022 residues are truncated to fit the model's
+        # positional encoding limit.
+
+        # Truncate if necessary (ESM-2 max input length)
+        seq_input = seq[:self.ESM_MAX_LEN]
+
+        # Prepare input: list of (label, sequence) tuples
+        data = [("seq", seq_input)]
+        _, _, batch_tokens = self.esm_batch_converter(data)
+
+        # Run inference with no gradient computation
+        with torch.no_grad():
+            results = self.esm_model(batch_tokens, repr_layers=[6])
+
+        # Extract last layer embeddings: shape (1, seq_len+2, 320)
+        # +2 for special <cls> and <eos> tokens
+        token_embeddings = results["representations"][6]
+
+        # Mean pool over residue positions (exclude <cls> at 0 and <eos> at end)
+        seq_len = len(seq_input)
+        residue_embeddings = token_embeddings[0, 1:seq_len+1, :]    # shape (seq_len, 320)
+        mean_embedding = residue_embeddings.mean(dim=0).numpy()     # shape (320,)
+
+        return {f"PLM_{i}": float(mean_embedding[i]) for i in range(self.esm_embed_dim)}
     
 
     def _print_if_verbose(self, msg):
@@ -388,7 +445,7 @@ if __name__ == "__main__":
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
     OUTPUT_CSV = PROJECT_DIR / "data" / "features.csv"
 
-    total_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147  # = 607
+    total_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147 + 320  # = 937
     print("Protein Feature Extractor")
     print(f"  FASTA dir : {FASTA_DIR}")
     print(f"  Output    : {OUTPUT_CSV}")
