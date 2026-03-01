@@ -445,7 +445,7 @@ if __name__ == "__main__":
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
     OUTPUT_CSV = PROJECT_DIR / "data" / "features.csv"
 
-    total_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147 + 320  # = 937
+    total_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147 + 320  # = 927
     print("Protein Feature Extractor")
     print(f"  FASTA dir : {FASTA_DIR}")
     print(f"  Output    : {OUTPUT_CSV}")
