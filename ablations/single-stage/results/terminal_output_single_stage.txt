@@ -1,0 +1,315 @@
+C:\Users\panos\Documents\code\bio\protein-prediction>C:\Users\panos\AppData\Local\Programs\Python\Python310\python.exe c:/Users/panos/Documents/code/bio/protein-prediction/src/single-stage-classifier.py
+
+    [2026-03-01 17:00:58] Starting pipeline
+
+Loaded 39678 samples x 928 columns
+SMOTE applied to classes: {4: 500, 5: 500, 6: 500}
+Train: 23997  |  Test: 7936
+  Train distribution → 0:17649  1:947  2:2215  3:1686  4:500  5:500  6:500
+  Test distribution → 0:6465  1:237  2:554  3:422  4:120  5:82  6:56
+
+    [2026-03-01 17:01:11] Data loaded
+
+
+Searching (3-fold CV, scoring=f1_macro)...
+n_iterations: 4
+n_required_iterations: 4
+n_possible_iterations: 4
+min_resources_: 500
+max_resources_: 23997
+aggressive_elimination: False
+factor: 3
+----------
+iter: 0
+n_candidates: 47
+n_resources: 500
+Fitting 3 folds for each of 47 candidates, totalling 141 fits
+----------
+iter: 1
+n_candidates: 16
+n_resources: 1500
+Fitting 3 folds for each of 16 candidates, totalling 48 fits
+----------
+iter: 2
+n_candidates: 6
+n_resources: 4500
+Fitting 3 folds for each of 6 candidates, totalling 18 fits
+----------
+iter: 3
+n_candidates: 2
+n_resources: 13500
+Fitting 3 folds for each of 2 candidates, totalling 6 fits
+
+Best CV f1_macro: 0.5633
+Best params: {
+  "reg_lambda": 0.5,
+  "n_estimators": 100,
+  "min_child_weight": 5,
+  "max_depth": 5,
+  "learning_rate": 0.05
+}
+
+All configurations (best → worst):
+ n_estimators  learning_rate  max_depth  min_child_weight  reg_lambda  iter  n_resources  mean_test_score  std_test_score  rank_test_score  mean_fit_time
+          100           0.05          5                 5         0.5     3        13500         0.563329        0.008538                1     223.088840
+          500           0.10          7                 5         5.0     3        13500         0.525398        0.010225                2     702.075313
+          500           0.10          7                 5         5.0     2         4500         0.430951        0.017587                3     557.439256
+          100           0.05          5                 5         0.5     2         4500         0.424594        0.032840                4     193.667053
+          500           0.05          3                 5         0.5     2         4500         0.419764        0.022031                5     203.602767
+          300           0.20          3                 5         5.0     2         4500         0.415232        0.022507                6     251.610529
+          500           0.20          5                 5         5.0     2         4500         0.408640        0.026900                7     436.041095
+          500           0.20          7                 3         1.0     2         4500         0.405154        0.032550                8     419.786440
+          500           0.05          3                 5         0.5     1         1500         0.329394        0.050050                9     167.934960
+          100           0.05          5                 5         0.5     1         1500         0.324643        0.031198               10      95.848177
+          500           0.20          7                 3         1.0     1         1500         0.323904        0.056859               11     128.187241
+          500           0.20          5                 5         5.0     1         1500         0.323373        0.006436               12     136.967694
+          500           0.10          7                 5         5.0     1         1500         0.322556        0.020690               13     201.671595
+          300           0.20          3                 5         5.0     1         1500         0.319663        0.032179               14      84.369516
+          100           0.20          5                 5         5.0     1         1500         0.317462        0.018989               15      55.912631
+          500           0.10          7                 3         5.0     1         1500         0.310434        0.055967               16     232.592270
+          500           0.10          7                 3         0.5     1         1500         0.307328        0.051749               17     174.995281
+          100           0.10          5                 5         1.0     1         1500         0.299965        0.041345               18      77.536641
+          300           0.05          7                 5         0.5     1         1500         0.299315        0.038312               19     112.691091
+          100           0.10          5                 3         0.5     1         1500         0.298091        0.040316               20      83.244750
+          300           0.05          7                 3         0.5     1         1500         0.295154        0.032798               21     209.204432
+          100           0.20          7                 5         5.0     1         1500         0.293622        0.029924               22      66.644908
+          500           0.20          7                 5         0.5     1         1500         0.290105        0.058163               23      77.109664
+          300           0.20          7                 5         1.0     1         1500         0.288103        0.027990               24      97.702592
+          500           0.20          7                 5         0.5     0          500         0.220727        0.061809               25      39.055856
+          300           0.05          7                 5         0.5     0          500         0.212714        0.052304               26      51.316573
+          100           0.20          5                 5         5.0     0          500         0.210012        0.032170               27      17.467159
+          300           0.20          3                 5         5.0     0          500         0.210003        0.046259               28      31.253243
+          100           0.20          7                 5         5.0     0          500         0.204937        0.038082               29      18.021598
+          500           0.10          7                 3         0.5     0          500         0.200368        0.054388               30      55.519549
+          100           0.10          5                 5         1.0     0          500         0.196166        0.043440               31      23.139921
+          500           0.10          7                 5         5.0     0          500         0.195436        0.058292               32      55.582182
+          100           0.05          5                 5         0.5     0          500         0.195097        0.052056               33      29.606735
+          500           0.20          5                 5         5.0     0          500         0.195039        0.014763               34      44.086526
+          300           0.20          7                 5         1.0     0          500         0.193757        0.035790               35      27.497559
+          100           0.10          5                 3         0.5     0          500         0.192818        0.066533               36      26.883486
+          500           0.10          7                 3         5.0     0          500         0.192088        0.056241               37      71.222881
+          500           0.20          7                 3         1.0     0          500         0.189845        0.047651               38      47.725164
+          500           0.05          3                 5         0.5     0          500         0.188474        0.036019               39      60.601737
+          300           0.05          7                 3         0.5     0          500         0.187839        0.022471               40      59.853725
+          500           0.05          3                 3         0.5     0          500         0.187681        0.034356               41      63.627896
+          100           0.05          3                 5         1.0     0          500         0.187388        0.048549               42      24.181813
+          100           0.20          7                 3         5.0     0          500         0.186507        0.052722               43      19.798379
+          500           0.05          3                 5         1.0     0          500         0.186126        0.038594               44      63.795723
+          500           0.05          3                 3         1.0     0          500         0.184574        0.023025               45      66.275856
+          100           0.05          3                 3         0.5     0          500         0.184530        0.036730               46      30.802591
+          300           0.05          7                 3         1.0     0          500         0.184443        0.021528               47      52.725311
+          100           0.05          7                 5         1.0     0          500         0.184421        0.033666               48      30.844328
+          500           0.20          5                 1         0.5     0          500         0.181928        0.041585               49      47.853739
+          500           0.10          3                 3         0.5     0          500         0.181763        0.042603               50      47.043723
+          100           0.10          7                 5         5.0     0          500         0.181664        0.035765               51      25.923297
+          100           0.05          3                 5         0.5     0          500         0.181502        0.037157               52      24.949957
+          100           0.10          5                 5         0.5     0          500         0.181360        0.023665               53      22.377626
+          300           0.10          5                 1         0.5     0          500         0.179584        0.041793               54      53.049335
+          100           0.05          3                 3         1.0     0          500         0.179228        0.042888               55      25.045622
+          300           0.20          3                 1         5.0     0          500         0.176565        0.052622               56      31.735722
+          300           0.10          3                 3         0.5     0          500         0.176178        0.042858               57      38.953922
+          300           0.20          3                 3         1.0     0          500         0.175060        0.040980               58      26.779031
+          500           0.20          3                 1         5.0     0          500         0.171535        0.049578               59      60.689512
+          100           0.10          5                 1         0.5     0          500         0.169773        0.042246               60      33.130064
+          500           0.05          3                 1         0.5     0          500         0.165319        0.026711               61      82.929038
+          500           0.20          5                 1         1.0     0          500         0.165083        0.038409               62      45.365920
+          300           0.10          5                 1         1.0     0          500         0.163641        0.030610               63      58.448529
+          300           0.10          5                 1         5.0     0          500         0.163543        0.039859               64      76.953696
+          100           0.10          7                 1         5.0     0          500         0.161731        0.052319               65      43.276308
+          100           0.20          7                 1         1.0     0          500         0.159546        0.040140               66      25.099288
+          100           0.20          3                 1         5.0     0          500         0.158358        0.034320               67      26.014679
+          500           0.05          7                 1         0.5     0          500         0.156911        0.019733               68     105.153828
+          500           0.05          5                 1         0.5     0          500         0.155820        0.028822               69      91.681026
+          100           0.10          3                 1         1.0     0          500         0.155439        0.037943               70      25.533049
+          300           0.05          5                 1         0.5     0          500         0.155352        0.029280               71      75.819674
+
+    [2026-03-01 17:43:55] Search complete
+
+Saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\results\search_results.csv
+
+    [2026-03-01 17:43:55] Search results saved
+
+
+    [2026-03-01 17:43:55] Best parameters saved
+
+Model trained on full training set (100 trees).
+
+    [2026-03-01 17:45:32] Model training complete
+
+
+============================================================
+EVALUATION ON HELD-OUT TEST SET
+============================================================
+  Macro F1          : 0.4358
+  Weighted F1       : 0.7960
+  Balanced Accuracy : 0.5716
+  MCC               : 0.4708
+
+                precision    recall  f1-score   support
+
+    Not enzyme     0.9611    0.8094    0.8788      6465
+Oxidoreductase     0.3951    0.6118    0.4801       237
+   Transferase     0.4262    0.6408    0.5119       554
+     Hydrolase     0.3477    0.5355    0.4216       422
+         Lyase     0.1497    0.3917    0.2166       120
+     Isomerase     0.1333    0.2439    0.1724        82
+        Ligase     0.2429    0.7679    0.3691        56
+
+      accuracy                         0.7647      7936
+     macro avg     0.3794    0.5716    0.4358      7936
+  weighted avg     0.8483    0.7647    0.7960      7936
+
+Confusion Matrix:
+[[5233  162  394  361  152   90   73]
+ [  20  145   17   12   25    6   12]
+ [  77   20  355   28   44    8   22]
+ [  87   13   37  226   26   22   11]
+ [  20   14   14   14   47    2    9]
+ [   8   12   12    7   16   20    7]
+ [   0    1    4    2    4    2   43]]
+
+    [2026-03-01 17:45:32] Evaluation complete
+
+Saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\results\evaluation_metrics.csv
+
+    [2026-03-01 17:45:32] Evaluation metrics saved
+
+Saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\results\confusion_matrix.csv
+
+    [2026-03-01 17:45:32] Confusion matrix saved
+
+Saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\results\predictions.csv
+
+    [2026-03-01 17:45:32] Predictions saved
+
+
+Top 20 features by gain (overall):
+                                 gain
+PLM_216                    122.122581
+PLM_112                    119.093079
+PLM_179                    118.273064
+CTDD_polarizability_G3_p0  116.467613
+CAT_mean_gap               114.176407
+PLM_317                     97.264191
+PLM_119                     96.938202
+PLM_58                      94.400070
+PLM_38                      83.531075
+PLM_161                     78.882027
+DPC_RQ                      73.356346
+DPC_QV                      70.643539
+PLM_281                     69.921402
+PLM_63                      67.239044
+PLM_89                      65.833595
+CTDT_charge_G2G3            65.751923
+PLM_187                     60.946121
+PLM_308                     59.574795
+PLM_150                     59.524815
+MOTIF_GxGxxG                58.593346
+Saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\results\feature_importance_overall.csv
+
+    [2026-03-01 17:45:32] Overall feature importance saved
+
+
+Top 10 features for Not enzyme:
+Feature
+PLM_179    7090.119594
+PLM_98     4529.783808
+PLM_112    4294.236303
+PLM_119    3572.265818
+PLM_34     2723.225342
+PLM_7      1800.058281
+PLM_61     1567.387848
+PLM_157    1519.760964
+PLM_33     1384.021745
+PLM_305    1368.693555
+
+Top 10 features for Oxidoreductase:
+Feature
+PLM_216    6585.482839
+PLM_308    2968.025798
+PLM_148    2523.248971
+PLM_312    2264.154306
+PLM_276    2008.415981
+PLM_286    1741.608617
+PLM_281    1647.452086
+PLM_262    1590.104319
+PLM_79     1577.793011
+PLM_247    1489.781648
+
+Top 10 features for Transferase:
+Feature
+PLM_311       2101.804462
+PLM_315       1922.437208
+PLM_318       1877.205881
+PLM_255       1706.106057
+MOTIF_CxxC    1384.192464
+PLM_248       1242.822895
+PLM_62        1171.641469
+PLM_226       1018.540160
+PLM_104        958.579608
+PLM_59         944.213369
+
+Top 10 features for Hydrolase:
+Feature
+PLM_187    3053.531760
+PLM_63     2895.824561
+PLM_248    2457.743903
+PLM_223    2279.227413
+PLM_1      1558.360598
+PLM_150    1505.510103
+PLM_29     1146.672888
+PLM_318    1025.848569
+PLM_115    1014.360893
+SS_turn     918.982851
+
+Top 10 features for Lyase:
+Feature
+PLM_38     5408.209412
+PLM_7      3260.498405
+PLM_306    2068.272971
+PLM_12      900.620062
+PLM_60      896.530159
+PLM_155     798.727844
+PLM_76      767.429731
+AAC_G       730.038996
+PLM_179     687.733786
+PLM_313     673.565281
+
+Top 10 features for Isomerase:
+Feature
+PLM_58     3158.993388
+PLM_89     2914.548996
+PLM_282    2010.979553
+PLM_5      1631.881163
+PLM_157    1481.968289
+PLM_202    1475.356735
+PLM_44     1447.455276
+PLM_12     1354.563823
+PLM_47      942.728132
+PLM_150     864.110460
+
+Top 10 features for Ligase:
+Feature
+PLM_112         13531.498658
+CAT_mean_gap     4583.352490
+PLM_161          4192.569049
+PLM_281          3808.275903
+PLM_317          3332.006156
+PLM_308          2873.159839
+PLM_187          2117.815239
+DPC_QV           1902.901530
+PLM_64           1642.722445
+PLM_10           1556.912558
+Saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\results\feature_importance_per_class.csv
+
+    [2026-03-01 17:45:33] Per-class feature importance saved
+
+Model saved → c:\Users\panos\Documents\code\bio\protein-prediction\ablations\single-stage\models\single_stage_model.json
+
+    [2026-03-01 17:45:33] Model saved
+
+
+    [2026-03-01 17:45:33] Pipeline finished
+
+
+C:\Users\panos\Documents\code\bio\protein-prediction>
