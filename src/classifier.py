@@ -64,10 +64,12 @@ class EnzymeClassifier:
 
     EC_NAMES = CLASS_NAMES[1:]  # just the 6 enzyme classes
 
-    def __init__(self, features_csv, test_size=0.2, random_state=42):
+    def __init__(self, features_csv, results_dir, handle_imbalance=True, test_size=0.2, random_state=42):
         self.features_csv = Path(features_csv)
+        self.results_dir = Path(results_dir)
         self.test_size = test_size
         self.random_state = random_state
+        self.handle_imbalance = handle_imbalance
 
         # Full dataset splits (7-class labels)
         self.X_train = None
@@ -138,18 +140,21 @@ class EnzymeClassifier:
         train_df = pd.DataFrame(self.X_train.values, columns=self.feature_names)
         train_df["binary_label"] = self.y_train_s1
 
-        # Undersample class 0 to ~3× the largest enzyme class for balance
-        n_enzyme = int(self.y_train_s1.sum())
-        n_non_enzyme = len(self.y_train_s1) - n_enzyme
-        n_class0_target = min(n_enzyme * 3, n_non_enzyme)
-        class_0_samples = train_df[train_df["binary_label"] == 0].sample(
-            n=n_class0_target, random_state=self.random_state
-        )
+        if self.handle_imbalance:
+            # Undersample class 0 to ~3× the largest enzyme class for balance
+            n_enzyme = int(self.y_train_s1.sum())
+            n_non_enzyme = len(self.y_train_s1) - n_enzyme
+            n_class0_target = min(n_enzyme * 3, n_non_enzyme)
+            class_0_samples = train_df[train_df["binary_label"] == 0].sample(
+                n=n_class0_target, random_state=self.random_state
+            )
+            enzyme_samples = train_df[train_df["binary_label"] == 1]
+            s1_df = pd.concat([class_0_samples, enzyme_samples]).sample(
+                frac=1, random_state=self.random_state
+            )
+        else:
+            s1_df = train_df
 
-        enzyme_samples = train_df[train_df["binary_label"] == 1]
-        s1_df = pd.concat([class_0_samples, enzyme_samples]).sample(
-            frac=1, random_state=self.random_state
-        )
         self.X_train_s1 = s1_df.drop(columns=["binary_label"])
         self.y_train_s1 = s1_df["binary_label"].values
 
@@ -163,10 +168,11 @@ class EnzymeClassifier:
         )
         self.y_train_s2 = self.y_train[enzyme_mask] - 1     # map labels 1-6 to 0-5, because XGBoost multi:softprob expects 0-based class indices
 
-        # SMOTE minority enzyme classes up to 500 samples
-        self.X_train_s2, self.y_train_s2 = self._smote_minority(
-            self.X_train_s2, self.y_train_s2, target=500
-        )
+        if self.handle_imbalance:
+            # SMOTE minority enzyme classes up to 500 samples
+            self.X_train_s2, self.y_train_s2 = self._smote_minority(
+                self.X_train_s2, self.y_train_s2, target=500
+            )
 
         print(f"\nStage 2 training: {len(self.X_train_s2)} samples")
         self._print_class_distribution("  S2", self.y_train_s2)
@@ -205,7 +211,7 @@ class EnzymeClassifier:
         else:
             raise ValueError("stage must be 1 or 2")
 
-        sample_weights = compute_sample_weight("balanced", y)
+        sample_weights = compute_sample_weight("balanced", y) if self.handle_imbalance else None
 
         base_params = self.base_params_s1 if stage == 1 else self.base_params_s2
 
@@ -253,8 +259,8 @@ class EnzymeClassifier:
 
         if not params_s1 or not params_s2:
             # fall back to saved json files if available
-            json_path_s1 = self.features_csv.parent.parent / "results" / "best_params_s1.json"
-            json_path_s2 = self.features_csv.parent.parent / "results" / "best_params_s2.json"
+            json_path_s1 = self.results_dir / "best_params_s1.json"
+            json_path_s2 = self.results_dir / "best_params_s2.json"
             if json_path_s1.exists() and json_path_s1.stat().st_size > 0:
                 with open(json_path_s1) as f:
                     params_s1 = json.load(f)
@@ -270,7 +276,7 @@ class EnzymeClassifier:
                 )
 
         # --> Train stage 1: binary
-        weights_s1 = compute_sample_weight("balanced", self.y_train_s1)
+        weights_s1 = compute_sample_weight("balanced", self.y_train_s1) if self.handle_imbalance else None
         self.model_s1 = xgb.XGBClassifier(
             **params_s1,
             **self.base_params_s1,
@@ -279,7 +285,7 @@ class EnzymeClassifier:
         print(f"Stage 1 trained ({params_s1.get('n_estimators', '?')} trees)")
 
         # --> Train stage 2: 6-class
-        weights_s2 = compute_sample_weight("balanced", self.y_train_s2)
+        weights_s2 = compute_sample_weight("balanced", self.y_train_s2) if self.handle_imbalance else None
         self.model_s2 = xgb.XGBClassifier(
             **params_s2,
             **self.base_params_s2,
@@ -319,7 +325,7 @@ class EnzymeClassifier:
         # Stage 2: samples predicted as enzyme
         enzyme_mask = s1_pred == 1
         if enzyme_mask.any():
-            X_enzyme = X[enzyme_mask] if hasattr(X, 'iloc') else X[enzyme_mask] # support both DataFrame and array inputs
+            X_enzyme = X[enzyme_mask]
             s2_probs = self.model_s2.predict_proba(X_enzyme)    # shape (m, 6): [P(EC1), ..., P(EC6)]
             s2_pred = self.model_s2.predict(X_enzyme) + 1       # remap labels 0-5 to 1-6
 
@@ -442,8 +448,9 @@ class EnzymeClassifier:
 
 
     def save_model(self, folder):
-        s1_path = Path(folder) / "model_s1.xgb"
-        s2_path = Path(folder) / "model_s2.xgb"
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        s1_path = Path(folder) / "model_s1.json"
+        s2_path = Path(folder) / "model_s2.json"
         self.model_s1.save_model(str(s1_path))
         self.model_s2.save_model(str(s2_path))
         print(f"Stage 1 saved → {s1_path}")
@@ -451,8 +458,8 @@ class EnzymeClassifier:
 
 
     def load_model(self, folder):
-        s1_path = Path(folder) / "model_s1.xgb"
-        s2_path = Path(folder) / "model_s2.xgb"
+        s1_path = Path(folder) / "model_s1.json"
+        s2_path = Path(folder) / "model_s2.json"
         self.model_s1 = xgb.XGBClassifier()
         self.model_s1.load_model(str(s1_path))
         self.model_s2 = xgb.XGBClassifier()
@@ -515,13 +522,36 @@ if __name__ == "__main__":
 
     SCRIPT_DIR   = Path(__file__).parent
     PROJECT_DIR  = SCRIPT_DIR.parent
-    FEATURES_CSV = PROJECT_DIR / "data" / "features.csv"
-    MODEL_DIR   = PROJECT_DIR / "models"
-    RESULTS_DIR  = PROJECT_DIR / "results"
+    # different dirs for ablation studies
+    standard_config = {
+        "features_csv": PROJECT_DIR / "data" / "features.csv",
+        "model_dir": PROJECT_DIR / "models",
+        "results_dir": PROJECT_DIR / "results",
+        "handle_imbalance": True,
+    }
+    # NOTE: single-stage config is in single-stage-classifier.py
+    no_plm_config = {
+        "features_csv": PROJECT_DIR / "data" / "features-NO-PLM.csv",
+        "model_dir": PROJECT_DIR / "ablations" / "no-plm" / "models",
+        "results_dir": PROJECT_DIR / "ablations" / "no-plm" / "results",
+        "handle_imbalance": True,
+    }
+    no_imbalance_handling_config = {
+        "features_csv": PROJECT_DIR / "data" / "features.csv",
+        "model_dir": PROJECT_DIR / "ablations" / "no-imbalance-handling" / "models",
+        "results_dir": PROJECT_DIR / "ablations" / "no-imbalance-handling" / "results",
+        "handle_imbalance": False,
+    }
+    
+    chosen_config = no_plm_config       # NOTE: change this to switch between configs
+    FEATURES_CSV = chosen_config["features_csv"]
+    MODEL_DIR    = chosen_config["model_dir"]
+    RESULTS_DIR  = chosen_config["results_dir"]
+    handle_imbalance = chosen_config["handle_imbalance"]
 
     log_time("Starting pipeline")
 
-    clf = EnzymeClassifier(features_csv=FEATURES_CSV)
+    clf = EnzymeClassifier(features_csv=FEATURES_CSV, results_dir=RESULTS_DIR, handle_imbalance=handle_imbalance)
 
     # ---------------- LOAD DATA ----------------
     clf.load_data()
