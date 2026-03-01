@@ -544,7 +544,7 @@ if __name__ == "__main__":
     }
     
     # NOTE: change this to switch between configs
-    chosen_config = no_plm_config
+    chosen_config = no_imbalance_handling_config
     
     FEATURES_CSV = chosen_config["features_csv"]
     MODEL_DIR    = chosen_config["model_dir"]
