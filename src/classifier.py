@@ -318,7 +318,7 @@ class EnzymeClassifier:
         probabilities[not_enzyme_mask, 0] = s1_probs[not_enzyme_mask, 0]
         # spread remaining probability evenly across enzyme classes (uninformed. but won't be used)
         if not_enzyme_mask.any():
-            enzyme_remainder = s1_probs[not_enzyme_mask, 1]
+            enzyme_remainder = s1_probs[not_enzyme_mask, 1]     # remember second col is P(enzyme)
             probabilities[not_enzyme_mask, 1:] = enzyme_remainder[:, np.newaxis] / 6
         # note: predictions array not changed - as already initialised to 0
 
