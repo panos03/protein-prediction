@@ -47,8 +47,6 @@ from imblearn.over_sampling import SMOTE
 import xgboost as xgb
 
 
-# TODO look over. change american comments
-
 
 class EnzymeClassifier:
 
@@ -411,18 +409,14 @@ class EnzymeClassifier:
 
     def feature_importance_per_class(self, top_n=10):
         # For stage 2 only
-        # TODO keep comment? :
-        # Per-class feature importance by partitioning trees by their class assignment.
-        # In XGBoost multi:softprob, one tree is grown per class per boosting round,
-        # cycling as: tree 0 → class 0, tree 1 → class 1, ..., tree 5 → class 5,
-        # tree 6 → class 0, tree 7 → class 1, ... so tree i belongs to class (i % 6).
-        # Summing gain over all split nodes for each class gives class-specific importance.
+        # By summing the gain of all split nodes in trees assigned to each class,
+        # we can get a measure of feature importance specific to each class. 
         if self.model_s2 is None:
             raise RuntimeError("Stage 2 model not trained.")
 
         trees_df = self.model_s2.get_booster().trees_to_dataframe()
 
-        # leaf nodes have Feature == "Leaf" — exclude them, only keep split nodes
+        # exclude leaf nodes, only keep split nodes
         splits = trees_df[trees_df["Feature"] != "Leaf"].copy()
         splits["class_idx"] = splits["Tree"] % len(self.EC_NAMES)
 
