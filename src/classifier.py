@@ -448,6 +448,7 @@ class EnzymeClassifier:
 
 
     def confidence_label(self, prob):
+        # using fixed thresholds
         if prob >= self.conf_high:
             return "High"
         elif prob >= self.conf_low:
@@ -457,13 +458,10 @@ class EnzymeClassifier:
 
 
     def validate_confidence(self):
-        """Print per-bucket accuracy on the held-out test set to verify thresholds.
+        # Print per-bucket accuracy on the held-out test set to verify thresholds
+        # Accuracy within each bucket should roughly match:
+        #   High   >= 80%       Medium  50-80%       Low    < 50%
 
-        Accuracy within each bucket should roughly match:
-          High   >= 80%
-          Medium  50-80%
-          Low    < 50%
-        """
         self._check_model()
 
         y_pred, y_prob = self.predict(self.X_test)
