@@ -1,30 +1,16 @@
 """
-blind-test.py
-=============
-Extracts features from the blind EC test FASTA and produces predictions
-in the required submission format:
+Required submission format:
 
     SEQ01 1 Confidence High
     SEQ02 0 Confidence Medium
     ...
 
-Confidence is derived from the probability of the predicted class:
+REMINDER: Confidence is derived from the probability of the predicted class
   - Class 0 (non-enzyme): P(not enzyme) from Stage 1 binary classifier
-  - Classes 1-6 (enzyme): P(enzyme) * P(EC k | enzyme)  [joint probability]
-
-This joint probability is a principled confidence measure — it is high only
-when both stages are confident, and naturally penalises borderline enzyme
-detections with uncertain EC assignment.
+  - Classes 1-6 (enzyme): P(enzyme) * P(EC k | enzyme)
 
 Thresholds (see EnzymeClassifier.confidence_label):
-  High   >= 0.8
-  Medium >= 0.5
-  Low     < 0.5
-
-Outputs
--------
-  blind-test/blind_features.csv     — extracted features (cached)
-  blind-test/blind_predictions.txt  — submission-ready predictions
+  High >= 0.8      Medium >= 0.5      Low < 0.5
 """
 
 import sys
@@ -60,9 +46,11 @@ def extract_features():
     df.to_csv(BLIND_FEAT_CSV, index=False)
     print(f"Features saved -> {BLIND_FEAT_CSV}")
     return df
+    
 
 
-def main():
+if __name__ == "__main__":
+    
     # 1. Extract (or load cached) features
     feat_df = extract_features()
     seq_ids = feat_df["seq_id"].tolist()
@@ -85,7 +73,7 @@ def main():
     # Confidence score = P(predicted class):
     #   class 0 -> probabilities[i, 0] = P(not enzyme) from Stage 1
     #   class k -> probabilities[i, k] = P(enzyme) * P(EC k | enzyme)
-    
+
     # Take the probability of the PREDICTED class for each sample, 
     # rather than having an array of probabilities for all classes
     conf_scores = probabilities[range(len(predictions)), predictions]
@@ -103,7 +91,3 @@ def main():
     OUTPUT_TXT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_TXT.write_text("\n".join(lines) + "\n")
     print(f"\nPredictions saved -> {OUTPUT_TXT}")
-
-
-if __name__ == "__main__":
-    main()
