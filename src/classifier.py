@@ -88,6 +88,10 @@ class EnzymeClassifier:
         self.best_params_s1 = {}
         self.best_params_s2 = {}
 
+        # Confidence thresholds — semantic: High = model majority-confident, Low = below chance
+        self.conf_high = 0.8
+        self.conf_low  = 0.5
+
         self.base_params_s1 = {
             "objective": "binary:logistic",
             "eval_metric": "logloss",
@@ -129,6 +133,7 @@ class EnzymeClassifier:
 
         # Prepare stage-specific training sets
         self._prepare_stages()
+
 
     def _prepare_stages(self):
         # --> Stage 1: binary (enzyme vs not enzyme)
@@ -174,6 +179,7 @@ class EnzymeClassifier:
 
         print(f"\nStage 2 training: {len(self.X_train_s2)} samples")
         self._print_class_distribution("  S2", self.y_train_s2)
+
 
     def _smote_minority(self, X, y, target=500):
         # SMOTE to bring minority classes up to target count, using interpolation
@@ -441,6 +447,44 @@ class EnzymeClassifier:
         return combined
 
 
+    def confidence_label(self, prob):
+        if prob >= self.conf_high:
+            return "High"
+        elif prob >= self.conf_low:
+            return "Medium"
+        else:
+            return "Low"
+
+
+    def validate_confidence(self):
+        """Print per-bucket accuracy on the held-out test set to verify thresholds.
+
+        Accuracy within each bucket should roughly match:
+          High   >= 80%
+          Medium  50-80%
+          Low    < 50%
+        """
+        self._check_model()
+
+        y_pred, y_prob = self.predict(self.X_test)
+        conf_scores = y_prob[np.arange(len(y_pred)), y_pred]
+
+        buckets = {"High": [0, 0], "Medium": [0, 0], "Low": [0, 0]}
+        for true, pred, score in zip(self.y_test, y_pred, conf_scores):
+            label = self.confidence_label(score)
+            buckets[label][0] += int(true == pred)
+            buckets[label][1] += 1
+
+        targets = {"High": ">=80%", "Medium": "50-80%", "Low": "<50%"}
+        print(f"\nConfidence validation  (High>={self.conf_high}, Medium>={self.conf_low}):")
+        print(f"  {'Level':<8} {'Correct':>8} {'Total':>8} {'Accuracy':>10}  {'Target':>8}")
+        for level in ("High", "Medium", "Low"):
+            correct, total = buckets[level]
+            acc = correct / total if total > 0 else float("nan")
+            print(f"  {level:<8} {correct:>8} {total:>8} {acc:>10.1%}  {targets[level]:>8}")
+        print()
+
+
     def save_model(self, folder):
         Path(folder).mkdir(parents=True, exist_ok=True)
         s1_path = Path(folder) / "model_s1.json"
@@ -474,28 +518,22 @@ class EnzymeClassifier:
             .reset_index(drop=True)
         )
 
+
     def _check_loaded(self):
         if self.X_train is None:
             raise RuntimeError("Data not loaded. Call load_data() first.")
 
+
     def _check_model(self):
         if self.model_s1 is None or self.model_s2 is None:
             raise RuntimeError("Both stages must be trained. Call train_best() first.")
+
 
     @staticmethod
     def _print_class_distribution(name, y):
         unique, counts = np.unique(y, return_counts=True)
         parts = "  ".join(f"{int(u)}:{c}" for u, c in zip(unique, counts))
         print(f"  {name} distribution → {parts}")
-
-    @staticmethod   # TODO use
-    def confidence_label(prob):     # confidence level thresholds
-        if prob >= 0.8:
-            return "High"
-        elif prob >= 0.5:
-            return "Medium"
-        else:
-            return "Low"
 
 
 def save_df_to_csv(df, path):

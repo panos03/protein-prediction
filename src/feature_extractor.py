@@ -150,6 +150,38 @@ class ProteinFeatureExtractor:
         return self._df
 
 
+    def extract_for_blind_test(self, fasta_path):
+
+        fasta_path = Path(fasta_path)
+        records = list(SeqIO.parse(str(fasta_path), "fasta"))
+        print(f"Extracting features for {len(records)} sequences in {fasta_path.name}...")
+
+        rows = []
+        skipped = 0
+        for i, record in enumerate(records):
+            seq = self._clean(str(record.seq))
+            if len(seq) < self.min_length:
+                skipped += 1
+                print(f"  Skipped (too short): {record.id}")
+                continue
+            try:
+                feats = self._extract(seq)
+                feats["seq_id"] = record.id
+                rows.append(feats)
+            except Exception as exc:
+                skipped += 1
+                print(f"  Skipped ({exc}): {seq[:40]}...")
+            if (i + 1) % 10 == 0:
+                self._print_if_verbose(f"  {i + 1}/{len(records)} sequences done")
+
+        df = pd.DataFrame(rows)
+        # move seq_id to front
+        df.insert(0, "seq_id", df.pop("seq_id"))
+        print(f"Extracted {len(df)} sequences x {len(df.columns) - 1} features"
+              + (f"  ({skipped} skipped)" if skipped else ""))
+        return df
+
+
     def to_csv(self, path):
 
         if self._df is None:
