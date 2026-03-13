@@ -46,6 +46,10 @@ from imblearn.over_sampling import SMOTE
 
 import xgboost as xgb
 
+import matplotlib
+matplotlib.use("Agg")          # non-interactive backend — safe for scripts
+import matplotlib.pyplot as plt
+
 
 
 class EnzymeClassifier:
@@ -457,7 +461,7 @@ class EnzymeClassifier:
             return "Low"
 
 
-    def validate_confidence(self):
+    def validate_confidence(self, save_path):
         # Print per-bucket accuracy on the held-out test set to verify thresholds
         # Accuracy within each bucket should roughly match:
         #   High   >= 80%       Medium  50-80%       Low    < 50%
@@ -481,6 +485,80 @@ class EnzymeClassifier:
             acc = correct / total if total > 0 else float("nan")
             print(f"  {level:<8} {correct:>8} {total:>8} {acc:>10.1%}  {targets[level]:>8}")
         print()
+
+        # Reliability diagram
+        n_bins = 10
+        bin_edges = np.linspace(0, 1, n_bins + 1)
+        bin_accs = []       # observed accuracy per bin
+        bin_confs = []      # mean predicted confidence per bin
+        bin_counts = []     # number of samples per bin
+    
+        correct = (y_pred == self.y_test)
+    
+        for i in range(n_bins):
+            lo, hi = bin_edges[i], bin_edges[i + 1]
+            if i < n_bins - 1:
+                mask = (conf_scores >= lo) & (conf_scores < hi)
+            else:
+                mask = (conf_scores >= lo) & (conf_scores <= hi)   # include 1.0 in last bin
+    
+            count = mask.sum()
+            bin_counts.append(count)
+            if count > 0:
+                bin_accs.append(correct[mask].mean())
+                bin_confs.append(conf_scores[mask].mean())
+            else:
+                bin_accs.append(np.nan)
+                bin_confs.append(np.nan)
+    
+        bin_accs = np.array(bin_accs)
+        bin_confs = np.array(bin_confs)
+        bin_counts = np.array(bin_counts)
+    
+        # Expected Calibration Error (weighted by bin count)
+        valid = ~np.isnan(bin_accs)
+        ece = np.average(np.abs(bin_accs[valid] - bin_confs[valid]), weights=bin_counts[valid])
+    
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=(5, 5), gridspec_kw={"height_ratios": [3, 1]}, sharex=True
+        )
+    
+        # Top: reliability curve
+        ax1.plot([0, 1], [0, 1], "k--", lw=1, label="Perfectly calibrated")
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        ax1.bar(
+            bin_centers[valid], bin_accs[valid],
+            width=1 / n_bins * 0.8, alpha=0.6, color="steelblue", label="Model"
+        )
+        ax1.plot(bin_confs[valid], bin_accs[valid], "o-", color="steelblue", ms=5)
+    
+        # Mark the confidence thresholds
+        ax1.axvline(self.conf_high, color="green", ls=":", alpha=0.7, label=f"High ≥ {self.conf_high}")
+        ax1.axvline(self.conf_low, color="orange", ls=":", alpha=0.7, label=f"Medium ≥ {self.conf_low}")
+    
+        ax1.set_ylabel("Observed Accuracy")
+        ax1.set_ylim(0, 1)
+        ax1.set_xlim(-0.05, 1.05)
+        ax1.set_title(f"Reliability Diagram  (ECE = {ece:.3f})")
+        ax1.legend(loc="upper left", fontsize=8)
+    
+        # Bottom: histogram of prediction counts per bin
+        ax2.bar(
+            (bin_edges[:-1] + bin_edges[1:]) / 2, bin_counts,
+            width=1 / n_bins * 0.8, color="gray", alpha=0.5
+        )
+        ax2.set_xlabel("Predicted Confidence")
+        ax2.set_ylabel("Count")
+        ax2.set_xlim(-0.05, 1.05)
+    
+        plt.tight_layout()
+    
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Reliability diagram saved → {save_path}")
+        print(f"Expected Calibration Error (ECE): {ece:.4f}")
 
 
     def save_model(self, folder):

@@ -50,7 +50,7 @@ def extract_features():
 
 
 if __name__ == "__main__":
-    
+
     # 1. Extract (or load cached) features
     feat_df = extract_features()
     seq_ids = feat_df["seq_id"].tolist()
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     clf.load_model(MODEL_DIR)
 
     # 3. Validate confidence thresholds on the test set
-    clf.validate_confidence()
+    clf.validate_confidence(PROJECT_DIR / "results" / "confidence_validation.png")
 
     # 4. Align feature columns to training order (ensure same order and no missing features)
     X_blind = X_blind[clf.feature_names]
