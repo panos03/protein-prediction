@@ -479,7 +479,7 @@ if __name__ == "__main__":
     PROJECT_DIR = SCRIPT_DIR.parent
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
 
-    USE_PLM = True   # set to False to extract classical features only (no ESM-2)
+    USE_PLM = True   # NOTE: set to False to extract classical features only (no ESM-2)
 
     OUTPUT_CSV = PROJECT_DIR / "data" / ("features.csv" if USE_PLM else "features-NO-PLM.csv")
 

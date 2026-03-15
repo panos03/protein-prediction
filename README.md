@@ -15,3 +15,7 @@ pip install -r requirements.txt
 # Usage
 
 Feature extraction, training, evaluation, ablations and data analysis can be performed by running the scripts in the src folder.
+
+# Note:
+
+The features for the NO-PLM ablation are not present, to save space. To run extraction for these, run feature_extractor.py with USE_PLM = False.
