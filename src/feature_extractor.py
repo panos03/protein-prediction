@@ -82,12 +82,14 @@ class ProteinFeatureExtractor:
     # ESM-2 max input length (model's positional encoding limit)
     ESM_MAX_LEN = 1022
 
-    def __init__(self, fasta_dir, min_length=2, verbose=False):
+    def __init__(self, fasta_dir, min_length=2, verbose=False, use_plm=True):
         self.fasta_dir = Path(fasta_dir)
         self.min_length = min_length
         self.verbose = verbose
+        self.use_plm = use_plm
         self._df = None
-        self._load_esm_model()
+        if use_plm:
+            self._load_esm_model()
 
 
     def _load_esm_model(self):
@@ -221,7 +223,8 @@ class ProteinFeatureExtractor:
         feats.update(self._feat_motifs(seq))
         feats.update(self._feat_complexity(seq))
         feats.update(self._feat_ctd(seq))
-        feats.update(self._feat_esm2(seq))
+        if self.use_plm:
+            feats.update(self._feat_esm2(seq))
         return feats
 
 
@@ -475,15 +478,20 @@ if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent
     PROJECT_DIR = SCRIPT_DIR.parent
     FASTA_DIR = PROJECT_DIR / "data" / "fasta-files"
-    OUTPUT_CSV = PROJECT_DIR / "data" / "features.csv"
 
-    total_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147 + 320  # = 927
+    USE_PLM = True   # set to False to extract classical features only (no ESM-2)
+
+    OUTPUT_CSV = PROJECT_DIR / "data" / ("features.csv" if USE_PLM else "features-NO-PLM.csv")
+
+    classical_features = 1 + 20 + 400 + 10 + 3 + 13 + 11 + 2 + 147   # = 607
+    total_features = classical_features + (320 if USE_PLM else 0)
     print("Protein Feature Extractor")
     print(f"  FASTA dir : {FASTA_DIR}")
     print(f"  Output    : {OUTPUT_CSV}")
+    print(f"  PLM       : {'enabled' if USE_PLM else 'disabled'}")
     print(f"  Expected Features  : {total_features}\n")
 
-    extractor = ProteinFeatureExtractor(fasta_dir=FASTA_DIR, verbose=True)
+    extractor = ProteinFeatureExtractor(fasta_dir=FASTA_DIR, verbose=True, use_plm=USE_PLM)
     df = extractor.run()
     extractor.to_csv(OUTPUT_CSV)
 
