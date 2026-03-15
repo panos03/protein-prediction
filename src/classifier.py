@@ -302,7 +302,7 @@ class EnzymeClassifier:
         print(f"Stage 2 trained ({params_s2.get('n_estimators', '?')} trees)")
 
 
-    def predict(self, X):   # TODO return class label along with High/Medium/Low confidence -> explain how this conversion is made? new blind predict method?
+    def predict(self, X):
         # Two-stage prediction:
         #   1. Binary: enzyme or not?
         #   2. If enzyme: which EC class?

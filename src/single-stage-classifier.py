@@ -199,7 +199,7 @@ class EnzymeClassifierSingleStage:
         }
 
 
-    def predict(self, X):   # TODO return class label along with High/Medium/Low confidence -> explain how this conversion is made? new blind predict method?
+    def predict(self, X):
         # Return (predicted classes, class probabilities) for new data
         self._check_model()
         return self.model.predict(X), self.model.predict_proba(X)
